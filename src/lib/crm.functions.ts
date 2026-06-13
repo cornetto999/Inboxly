@@ -56,17 +56,22 @@ export const getDashboardStats = createServerFn({ method: "GET" })
       : supabase.from("leads").select("status", { count: "exact" }).eq("owner_id", userId);
     const scopeCustomers = isAdmin ? supabase.from("customers").select("status", { count: "exact" })
       : supabase.from("customers").select("status", { count: "exact" }).eq("owner_id", userId);
+    const scopeEmails = isAdmin ? supabase.from("emails").select("is_read", { count: "exact" })
+      : supabase.from("emails").select("is_read", { count: "exact" }).eq("user_id", userId);
 
-    const [{ data: leads }, { data: customers }, { data: dueReminders }] = await Promise.all([
+    const [{ data: leads }, { data: customers }, { data: dueReminders }, { data: emails }] = await Promise.all([
       scopeLeads,
       scopeCustomers,
       supabase.from("reminders").select("id").eq("user_id", userId).is("completed_at", null).lte("due_at", new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()),
+      scopeEmails,
     ]);
 
     const byStatus = (rows: { status: string }[] | null, s: string) => (rows ?? []).filter((r) => r.status === s).length;
     return {
       totalLeads: leads?.length ?? 0,
       newLeads: byStatus(leads ?? null, "new"),
+      totalEmails: emails?.length ?? 0,
+      unreadEmails: (emails ?? []).filter((email) => !email.is_read).length,
       followUpsDue: dueReminders?.length ?? 0,
       wonCustomers: byStatus(leads ?? null, "won"),
       lostCustomers: byStatus(leads ?? null, "lost"),
@@ -326,12 +331,13 @@ export const listEmails = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({
     search: z.string().optional(),
-    status: z.string().optional(),
+    status: z.enum(["unread"]).optional(),
     fromDate: z.string().optional(),
   }).parse(input ?? {}))
   .handler(async ({ context, data }) => {
     let q = context.supabase.from("emails").select("*").order("received_at", { ascending: false }).limit(200);
     if (data.search) q = q.or(`subject.ilike.%${data.search}%,from_email.ilike.%${data.search}%,from_name.ilike.%${data.search}%`);
+    if (data.status === "unread") q = q.eq("is_read", false);
     if (data.fromDate) q = q.gte("received_at", data.fromDate);
     const { data: rows, error } = await q;
     if (error) throw error;

@@ -77,11 +77,6 @@ function SettingsPage() {
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
         scopes: GMAIL_OAUTH_SCOPES,
-        queryParams: {
-          access_type: "offline",
-          include_granted_scopes: "true",
-          prompt: "consent",
-        },
       },
     });
     if (error) throw toError(error, "Unable to start Google sign-in.");

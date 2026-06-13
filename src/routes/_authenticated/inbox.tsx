@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -17,8 +17,18 @@ import { Loader2, RefreshCw, Search, Mail, UserPlus, UserCheck, Send } from "luc
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+const EMAIL_STATUSES = ["unread"] as const;
+type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+function isEmailStatus(value: unknown): value is EmailStatus {
+  return typeof value === "string" && EMAIL_STATUSES.includes(value as EmailStatus);
+}
+
 export const Route = createFileRoute("/_authenticated/inbox")({
   head: () => ({ meta: [{ title: "Inbox — Inboxly" }] }),
+  validateSearch: (search: Record<string, unknown>) => ({
+    status: isEmailStatus(search.status) ? search.status : undefined,
+  }),
   component: InboxPage,
 });
 
@@ -32,6 +42,8 @@ function InboxPage() {
   const mkLead = useServerFn(createLead);
   const mkCust = useServerFn(createCustomerFromEmail);
   const mkRead = useServerFn(markEmailRead);
+  const { status } = Route.useSearch();
+  const showingUnread = status === "unread";
 
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
@@ -39,8 +51,8 @@ function InboxPage() {
 
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: () => listAcc() });
   const { data: emails = [], isLoading } = useQuery({
-    queryKey: ["emails", search, from],
-    queryFn: () => listEm({ data: { search, fromDate: from || undefined } }),
+    queryKey: ["emails", search, from, status],
+    queryFn: () => listEm({ data: { search, status, fromDate: from || undefined } }),
   });
 
   const syncMut = useMutation({
@@ -77,7 +89,9 @@ function InboxPage() {
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Inbox</h1>
-          <p className="text-sm text-muted-foreground">{emails.length} email(s)</p>
+          <p className="text-sm text-muted-foreground">
+            {showingUnread ? `${emails.length} unread email(s)` : `${emails.length} email(s)`}
+          </p>
         </div>
         <div className="flex gap-2">
           {accounts.length === 0 ? (
@@ -98,6 +112,11 @@ function InboxPage() {
             <Input className="pl-9" placeholder="Search subject or sender" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <Input type="date" className="w-44" value={from} onChange={(e) => setFrom(e.target.value)} />
+          {showingUnread && (
+            <Button variant="outline" asChild>
+              <Link to="/inbox">Show all</Link>
+            </Button>
+          )}
         </div>
       </Card>
 
@@ -107,8 +126,10 @@ function InboxPage() {
         ) : emails.length === 0 ? (
           <div className="p-12 text-center">
             <Mail className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-            <p className="font-medium">No emails yet</p>
-            <p className="text-sm text-muted-foreground">{accounts.length === 0 ? "Connect Gmail to sync your inbox." : "Click Sync now to import."}</p>
+            <p className="font-medium">{showingUnread ? "No unread emails" : "No emails yet"}</p>
+            <p className="text-sm text-muted-foreground">
+              {showingUnread ? "All caught up." : accounts.length === 0 ? "Connect Gmail to sync your inbox." : "Click Sync now to import."}
+            </p>
           </div>
         ) : (
           <div className="divide-y">

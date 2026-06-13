@@ -12,6 +12,8 @@ import {
   Trophy,
   XCircle,
   UserCheck,
+  Inbox,
+  Mail,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -64,6 +66,22 @@ function Dashboard() {
       color: "text-cyan-500",
       to: "/leads",
       status: "new",
+    },
+    {
+      label: "Total Emails",
+      value: data.totalEmails,
+      Icon: Inbox,
+      color: "text-sky-500",
+      to: "/inbox",
+      status: undefined,
+    },
+    {
+      label: "Unread Emails",
+      value: data.unreadEmails,
+      Icon: Mail,
+      color: "text-orange-500",
+      to: "/inbox",
+      status: "unread",
     },
     {
       label: "Follow-ups Due",
@@ -127,7 +145,7 @@ function Dashboard() {
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your CRM at a glance.</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => {
           const linkClassName =
             "group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
@@ -138,6 +156,20 @@ function Dashboard() {
                 key={card.label}
                 to="/leads"
                 search={card.status ? { status: card.status } : undefined}
+                aria-label={`Open ${card.label}`}
+                className={linkClassName}
+              >
+                {renderCard(card)}
+              </Link>
+            );
+          }
+
+          if (card.to === "/inbox") {
+            return (
+              <Link
+                key={card.label}
+                to="/inbox"
+                search={card.status === "unread" ? { status: "unread" } : undefined}
                 aria-label={`Open ${card.label}`}
                 className={linkClassName}
               >
