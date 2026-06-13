@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
-const GATEWAY_BASE_URL = "https://connector-gateway.lovable.dev";
+const GMAIL_API_BASE_URL = "https://gmail.googleapis.com";
 
 // ---------- Roles ----------
 export const getMyRole = createServerFn({ method: "GET" })
@@ -87,38 +87,6 @@ export const deleteEmailAccount = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// ---------- Gmail OAuth ----------
-export const startGmailConnect = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ targetOrigin: z.string().url() }).parse(input))
-  .handler(async ({ context, data }) => {
-    const { authorizeAppUserOAuth } = await import("@/integrations/lovable/appUserConnector");
-    const clientId = process.env.GOOGLE_APP_USER_CONNECTOR_CLIENT_ID;
-    if (!clientId) {
-      throw new Error(
-        "Gmail OAuth is not configured. Add GOOGLE_APP_USER_CONNECTOR_CLIENT_ID in Vercel Environment Variables, then redeploy.",
-      );
-    }
-    const { authorizationUrl } = await authorizeAppUserOAuth({
-      gatewayBaseUrl: GATEWAY_BASE_URL,
-      connectorId: "google",
-      appUserId: context.userId,
-      connectorClientId: clientId,
-      returnUrl: `${data.targetOrigin}/settings`,
-      responseMode: "web_message",
-      webMessageTargetOrigin: data.targetOrigin,
-      credentialsConfiguration: {
-        scopes: [
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.send",
-          "https://www.googleapis.com/auth/gmail.modify",
-          "https://www.googleapis.com/auth/userinfo.email",
-        ],
-      },
-    });
-    return { authorizationUrl };
-  });
-
 // ---------- Gmail Sync ----------
 type GmailHeader = { name: string; value: string };
 type GmailPayload = {
@@ -158,22 +126,59 @@ function parseFrom(raw: string): { email: string; name: string } {
   return { email: raw.trim(), name: "" };
 }
 
+type StoredGmailConnection = {
+  accessToken?: string;
+};
+
+function getGmailAccessToken(connectionApiKey: string): string {
+  try {
+    const parsed = JSON.parse(connectionApiKey) as StoredGmailConnection;
+    if (parsed.accessToken) return parsed.accessToken;
+  } catch {
+    // Older saved rows may contain a raw token string.
+  }
+
+  return connectionApiKey;
+}
+
+async function callGmailApi({
+  connectionApiKey,
+  path,
+  init,
+}: {
+  connectionApiKey: string;
+  path: string;
+  init?: RequestInit;
+}): Promise<Response> {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${getGmailAccessToken(connectionApiKey)}`);
+
+  return fetch(`${GMAIL_API_BASE_URL}${normalizedPath}`, { ...init, headers });
+}
+
+async function throwGmailError(action: string, res: Response): Promise<never> {
+  const details = await res.text();
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(`Gmail ${action} failed. Reconnect Gmail in Settings.`);
+  }
+
+  throw new Error(`Gmail ${action} failed: ${res.status} ${details}`);
+}
+
 export const syncGmail = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ accountId: z.string().uuid(), maxResults: z.number().min(1).max(100).optional() }).parse(input))
   .handler(async ({ context, data }) => {
-    const { callAsAppUser } = await import("@/integrations/lovable/appUserConnector");
     const { data: account, error: accErr } = await context.supabase
       .from("email_accounts").select("*").eq("id", data.accountId).single();
     if (accErr || !account) throw new Error("Account not found");
 
-    const listRes = await callAsAppUser({
-      gatewayBaseUrl: GATEWAY_BASE_URL,
-      connectionAPIKey: account.connection_api_key,
-      connectorId: "google_mail",
+    const listRes = await callGmailApi({
+      connectionApiKey: account.connection_api_key,
       path: `/gmail/v1/users/me/messages?maxResults=${data.maxResults ?? 25}&q=in:inbox`,
     });
-    if (!listRes.ok) throw new Error(`Gmail list failed: ${listRes.status} ${await listRes.text()}`);
+    if (!listRes.ok) await throwGmailError("list", listRes);
     const listJson = await listRes.json() as { messages?: { id: string }[] };
     const messageIds = (listJson.messages ?? []).map((m) => m.id);
 
@@ -184,10 +189,8 @@ export const syncGmail = createServerFn({ method: "POST" })
         .from("emails").select("id").eq("account_id", account.id).eq("gmail_message_id", mid).maybeSingle();
       if (existing) continue;
 
-      const msgRes = await callAsAppUser({
-        gatewayBaseUrl: GATEWAY_BASE_URL,
-        connectionAPIKey: account.connection_api_key,
-        connectorId: "google_mail",
+      const msgRes = await callGmailApi({
+        connectionApiKey: account.connection_api_key,
         path: `/gmail/v1/users/me/messages/${mid}?format=full`,
       });
       if (!msgRes.ok) continue;
@@ -242,7 +245,6 @@ export const sendGmailReply = createServerFn({ method: "POST" })
     inReplyToEmailId: z.string().uuid().optional(),
   }).parse(input))
   .handler(async ({ context, data }) => {
-    const { callAsAppUser } = await import("@/integrations/lovable/appUserConnector");
     const { data: account } = await context.supabase
       .from("email_accounts").select("*").eq("id", data.accountId).single();
     if (!account) throw new Error("Account not found");
@@ -262,14 +264,12 @@ export const sendGmailReply = createServerFn({ method: "POST" })
     const body: Record<string, unknown> = { raw };
     if (data.threadId) body.threadId = data.threadId;
 
-    const res = await callAsAppUser({
-      gatewayBaseUrl: GATEWAY_BASE_URL,
-      connectionAPIKey: account.connection_api_key,
-      connectorId: "google_mail",
+    const res = await callGmailApi({
+      connectionApiKey: account.connection_api_key,
       path: "/gmail/v1/users/me/messages/send",
       init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     });
-    if (!res.ok) throw new Error(`Send failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) await throwGmailError("send", res);
 
     await context.supabase.from("activity_logs").insert({
       actor_id: context.userId, entity_type: "email", entity_id: data.inReplyToEmailId ?? null,

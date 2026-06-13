@@ -1,16 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { listEmailAccounts, saveEmailAccount, deleteEmailAccount, startGmailConnect } from "@/lib/crm.functions";
-import { connectAppUser } from "@/integrations/lovable/appUserConnectorClient";
+import { useEffect, useState } from "react";
+import { listEmailAccounts, saveEmailAccount, deleteEmailAccount } from "@/lib/crm.functions";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  createGmailConnectionToken,
+  getGoogleSessionEmail,
+  GMAIL_CONNECT_PENDING_KEY,
+  GMAIL_OAUTH_SCOPES,
+} from "@/lib/gmail-oauth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Mail, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-const GATEWAY_BASE_URL = "https://connector-gateway.lovable.dev";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — Inboxly" }] }),
@@ -22,35 +26,77 @@ function SettingsPage() {
   const list = useServerFn(listEmailAccounts);
   const save = useServerFn(saveEmailAccount);
   const del = useServerFn(deleteEmailAccount);
-  const startConnect = useServerFn(startGmailConnect);
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: () => list() });
   const [connecting, setConnecting] = useState(false);
+
+  const saveCurrentGoogleSession = async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const session = data.session;
+    const connectionToken = session ? createGmailConnectionToken(session) : null;
+    if (!session || !connectionToken) return false;
+
+    const email = getGoogleSessionEmail(session);
+    if (!email) throw new Error("Google account email was not returned.");
+
+    await save({ data: { email_address: email, connection_api_key: connectionToken } });
+    toast.success("Gmail connected");
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+    return true;
+  };
+
+  const startGoogleGmailConsent = async () => {
+    localStorage.setItem(GMAIL_CONNECT_PENDING_KEY, "1");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        scopes: GMAIL_OAUTH_SCOPES,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
+    });
+    if (error) throw error;
+  };
 
   const handleConnect = async () => {
     setConnecting(true);
     try {
-      const result = await connectAppUser({
-        connectorId: "google",
-        gatewayBaseUrl: GATEWAY_BASE_URL,
-        start: (targetOrigin) => startConnect({ data: { targetOrigin } }),
-      });
-      if (!result.success || !result.connectionAPIKey) {
-        toast.error(result.error || "Connection failed");
-        return;
-      }
-      // We don't know the email yet; ask user to provide or call Gmail profile endpoint client-side via server later.
-      // For simplicity, ask the server to save with the user's auth email as the address placeholder.
-      const email = prompt("Enter the Gmail address you just connected:");
-      if (!email) return;
-      await save({ data: { email_address: email, connection_api_key: result.connectionAPIKey } });
-      toast.success("Gmail connected");
-      qc.invalidateQueries({ queryKey: ["accounts"] });
+      const saved = await saveCurrentGoogleSession();
+      if (!saved) await startGoogleGmailConsent();
     } catch (e) {
+      localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
       toast.error(e instanceof Error ? e.message : "Failed");
-    } finally {
       setConnecting(false);
     }
   };
+
+  useEffect(() => {
+    if (localStorage.getItem(GMAIL_CONNECT_PENDING_KEY) !== "1") return;
+
+    let active = true;
+    setConnecting(true);
+    saveCurrentGoogleSession()
+      .then((saved) => {
+        if (!active) return;
+        if (saved) localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
+      })
+      .catch((e) => {
+        if (!active) return;
+        localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
+        toast.error(e instanceof Error ? e.message : "Failed");
+      })
+      .finally(() => {
+        if (active) setConnecting(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const rm = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
