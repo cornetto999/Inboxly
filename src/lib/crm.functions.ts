@@ -95,7 +95,9 @@ export const startGmailConnect = createServerFn({ method: "POST" })
     const { authorizeAppUserOAuth } = await import("@/integrations/lovable/appUserConnector");
     const clientId = process.env.GOOGLE_APP_USER_CONNECTOR_CLIENT_ID;
     if (!clientId) {
-      throw new Error("Gmail OAuth not configured. Ask the admin to add GOOGLE_APP_USER_CONNECTOR_CLIENT_ID.");
+      throw new Error(
+        "Gmail OAuth is not configured. Add GOOGLE_APP_USER_CONNECTOR_CLIENT_ID in Vercel Environment Variables, then redeploy.",
+      );
     }
     const { authorizationUrl } = await authorizeAppUserOAuth({
       gatewayBaseUrl: GATEWAY_BASE_URL,

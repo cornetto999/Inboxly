@@ -1,9 +1,3 @@
-function requireApiKey(): string {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("LOVABLE_API_KEY is not set.");
-  return key;
-}
-
 export interface AppUserOAuthAuthorizeParams {
   gatewayBaseUrl: string;
   connectorId: string;
@@ -26,7 +20,6 @@ export async function authorizeAppUserOAuth(
   const res = await fetch(`${params.gatewayBaseUrl}/api/v1/app-users/oauth2/authorize`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${requireApiKey()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -69,7 +62,6 @@ export async function callAsAppUser({
 }: CallAsAppUserParams): Promise<Response> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const headers = new Headers(init?.headers);
-  headers.set("Authorization", `Bearer ${requireApiKey()}`);
   headers.set("X-Connection-Api-Key", connectionAPIKey);
   return fetch(`${gatewayBaseUrl}/${connectorId}${normalizedPath}`, { ...init, headers });
 }

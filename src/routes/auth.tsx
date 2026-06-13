@@ -1,4 +1,10 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useNavigate,
+  Link,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -17,8 +23,16 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Sign in — Inboxly" }] }),
-  component: AuthPage,
+  component: AuthRoutePage,
 });
+
+function AuthRoutePage() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  if (pathname !== "/auth") return <Outlet />;
+
+  return <AuthPage />;
+}
 
 function AuthPage() {
   const navigate = useNavigate();

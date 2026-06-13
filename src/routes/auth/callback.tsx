@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { consumeSupabaseUrlSession } from "@/lib/auth-url-session";
 
 export const Route = createFileRoute("/auth/callback")({
   head: () => ({ meta: [{ title: "Signing in - Inboxly" }] }),
@@ -25,6 +26,14 @@ function AuthCallbackPage() {
 
         if (providerError) {
           throw new Error(providerError);
+        }
+
+        const didConsumeHashSession = await consumeSupabaseUrlSession();
+        if (didConsumeHashSession) {
+          if (!active) return;
+          toast.success("Signed in with Google");
+          navigate({ to: "/dashboard", replace: true });
+          return;
         }
 
         const code = url.searchParams.get("code");

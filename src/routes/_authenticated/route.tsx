@@ -1,6 +1,8 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getMyRole } from "@/lib/crm.functions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 
@@ -16,12 +18,19 @@ export const Route = createFileRoute("/_authenticated")({
 
 function AuthedLayout() {
   const { user } = Route.useRouteContext();
+  const getRole = useServerFn(getMyRole);
   const { data: isAdmin = false } = useQuery({
     queryKey: ["role", user.id, "admin"],
     queryFn: async () => {
-      const { data } = await supabase.rpc("has_role", { _user_id: user.id, _role: "admin" });
-      return Boolean(data);
+      try {
+        const role = await getRole();
+        return role.isAdmin;
+      } catch (error) {
+        console.warn("Unable to load admin role; defaulting to staff navigation.", error);
+        return false;
+      }
     },
+    retry: false,
   });
 
   return (
