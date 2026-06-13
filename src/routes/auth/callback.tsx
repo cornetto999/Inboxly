@@ -4,7 +4,11 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { consumeSupabaseUrlSession } from "@/lib/auth-url-session";
-import { GMAIL_CONNECT_PENDING_KEY } from "@/lib/gmail-oauth";
+import {
+  GMAIL_CONNECT_PENDING_KEY,
+  savePendingGmailConnectionTokenFromSession,
+} from "@/lib/gmail-oauth";
+import { getErrorMessage, toError } from "@/lib/errors";
 
 export const Route = createFileRoute("/auth/callback")({
   head: () => ({ meta: [{ title: "Signing in - Inboxly" }] }),
@@ -45,13 +49,15 @@ function AuthCallbackPage() {
 
         const code = url.searchParams.get("code");
         if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw toError(error, "Google sign-in failed.");
+          savePendingGmailConnectionTokenFromSession(data.session);
         } else {
           const { data, error } = await supabase.auth.getSession();
-          if (error) throw error;
+          if (error) throw toError(error, "Google sign-in failed.");
           if (!data.session)
             throw new Error("No sign-in session was returned.");
+          savePendingGmailConnectionTokenFromSession(data.session);
         }
 
         if (!active) return;
@@ -65,8 +71,7 @@ function AuthCallbackPage() {
         });
       } catch (error) {
         if (!active) return;
-        const errorMessage =
-          error instanceof Error ? error.message : "Google sign-in failed";
+        const errorMessage = getErrorMessage(error, "Google sign-in failed");
         setMessage(errorMessage);
         toast.error(errorMessage);
         navigate({ to: "/auth", replace: true });

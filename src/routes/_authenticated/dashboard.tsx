@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { getDashboardStats } from "@/lib/crm.functions";
+import { getErrorMessage, toError } from "@/lib/errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ArrowUpRight,
@@ -18,10 +19,18 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   loader: ({ context }) =>
     context.queryClient.ensureQueryData({
       queryKey: ["dashboard"],
-      queryFn: () => getDashboardStats(),
+      queryFn: async () => {
+        try {
+          return await getDashboardStats();
+        } catch (error) {
+          throw toError(error, "Unable to load dashboard.");
+        }
+      },
     }),
   errorComponent: ({ error }) => (
-    <div className="p-8 text-destructive">{error.message}</div>
+    <div className="p-8 text-destructive">
+      {getErrorMessage(error, "Unable to load dashboard.")}
+    </div>
   ),
   component: Dashboard,
 });
@@ -30,7 +39,13 @@ function Dashboard() {
   const fn = useServerFn(getDashboardStats);
   const { data } = useSuspenseQuery({
     queryKey: ["dashboard"],
-    queryFn: () => fn(),
+    queryFn: async () => {
+      try {
+        return await fn();
+      } catch (error) {
+        throw toError(error, "Unable to load dashboard.");
+      }
+    },
   });
 
   const cards = [

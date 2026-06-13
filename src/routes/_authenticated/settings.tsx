@@ -2,17 +2,20 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { listEmailAccounts, saveEmailAccount, deleteEmailAccount } from "@/lib/crm.functions";
+import { listEmailAccounts, saveEmailAccount, deleteEmailAccount, syncGmail } from "@/lib/crm.functions";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  clearPendingGmailConnectionToken,
   createGmailConnectionToken,
+  getPendingGmailConnectionToken,
   getGoogleSessionEmail,
   GMAIL_CONNECT_PENDING_KEY,
   GMAIL_OAUTH_SCOPES,
 } from "@/lib/gmail-oauth";
+import { getErrorMessage, toError } from "@/lib/errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Mail, Trash2, Loader2 } from "lucide-react";
+import { Mail, Trash2, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -25,24 +28,45 @@ function SettingsPage() {
   const qc = useQueryClient();
   const list = useServerFn(listEmailAccounts);
   const save = useServerFn(saveEmailAccount);
+  const sync = useServerFn(syncGmail);
   const del = useServerFn(deleteEmailAccount);
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: () => list() });
   const [connecting, setConnecting] = useState(false);
 
+  const invalidateEmailData = () => {
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["emails"] });
+  };
+
+  const showSyncResult = (result: { imported: number }) => {
+    toast.success(
+      result.imported > 0
+        ? `Imported ${result.imported} email(s)`
+        : "Gmail synced. No new emails found.",
+    );
+  };
+
   const saveCurrentGoogleSession = async () => {
     const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
+    if (error) throw toError(error, "Unable to read Google session.");
 
     const session = data.session;
-    const connectionToken = session ? createGmailConnectionToken(session) : null;
+    const connectionToken =
+      getPendingGmailConnectionToken() ??
+      (session ? createGmailConnectionToken(session) : null);
     if (!session || !connectionToken) return false;
 
     const email = getGoogleSessionEmail(session);
     if (!email) throw new Error("Google account email was not returned.");
 
-    await save({ data: { email_address: email, connection_api_key: connectionToken } });
-    toast.success("Gmail connected");
-    qc.invalidateQueries({ queryKey: ["accounts"] });
+    const account = await save({ data: { email_address: email, connection_api_key: connectionToken } });
+    clearPendingGmailConnectionToken();
+    localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
+    toast.success("Gmail connected. Syncing inbox...");
+
+    const result = await sync({ data: { accountId: account.id, maxResults: 25 } });
+    showSyncResult(result);
+    invalidateEmailData();
     return true;
   };
 
@@ -55,21 +79,21 @@ function SettingsPage() {
         scopes: GMAIL_OAUTH_SCOPES,
         queryParams: {
           access_type: "offline",
+          include_granted_scopes: "true",
           prompt: "consent",
         },
       },
     });
-    if (error) throw error;
+    if (error) throw toError(error, "Unable to start Google sign-in.");
   };
 
   const handleConnect = async () => {
     setConnecting(true);
     try {
-      const saved = await saveCurrentGoogleSession();
-      if (!saved) await startGoogleGmailConsent();
+      await startGoogleGmailConsent();
     } catch (e) {
       localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
-      toast.error(e instanceof Error ? e.message : "Failed");
+      toast.error(getErrorMessage(e, "Failed"));
       setConnecting(false);
     }
   };
@@ -87,7 +111,7 @@ function SettingsPage() {
       .catch((e) => {
         if (!active) return;
         localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
-        toast.error(e instanceof Error ? e.message : "Failed");
+        toast.error(getErrorMessage(e, "Failed"));
       })
       .finally(() => {
         if (active) setConnecting(false);
@@ -101,6 +125,15 @@ function SettingsPage() {
   const rm = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
     onSuccess: () => { toast.success("Disconnected"); qc.invalidateQueries({ queryKey: ["accounts"] }); },
+  });
+
+  const syncMut = useMutation({
+    mutationFn: (id: string) => sync({ data: { accountId: id, maxResults: 25 } }),
+    onSuccess: (result) => {
+      showSyncResult(result);
+      invalidateEmailData();
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
@@ -132,7 +165,23 @@ function SettingsPage() {
                     {a.last_sync_at ? `Last sync ${format(new Date(a.last_sync_at), "PPp")}` : "Not synced yet"}
                   </div>
                 </div>
-                <Button size="icon" variant="ghost" onClick={() => rm.mutate(a.id)}><Trash2 className="h-4 w-4" /></Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Sync now"
+                    aria-label="Sync now"
+                    onClick={() => syncMut.mutate(a.id)}
+                    disabled={syncMut.isPending || connecting}
+                  >
+                    {syncMut.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={() => rm.mutate(a.id)}><Trash2 className="h-4 w-4" /></Button>
+                </div>
               </div>
             ))}
           </div>

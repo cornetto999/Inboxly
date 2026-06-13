@@ -48,6 +48,7 @@ function InboxPage() {
     onSuccess: (res) => {
       toast.success(`Imported ${res.imported} new email(s)`);
       qc.invalidateQueries({ queryKey: ["emails"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

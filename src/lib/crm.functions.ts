@@ -1,8 +1,35 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { getErrorMessage, toError } from "@/lib/errors";
 import { z } from "zod";
 
 const GMAIL_API_BASE_URL = "https://gmail.googleapis.com";
+
+function isMissingSupabaseSchemaError(error: unknown) {
+  const message = getErrorMessage(error, "");
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? error.code
+      : undefined;
+
+  return (
+    code === "PGRST205" ||
+    code === "PGRST202" ||
+    message.includes("schema cache") ||
+    message.includes("Could not find the table") ||
+    message.includes("Could not find the function")
+  );
+}
+
+function toSupabaseError(error: unknown, objectName: string) {
+  if (isMissingSupabaseSchemaError(error)) {
+    return new Error(
+      `Inboxly backend schema is not installed in Supabase. Missing ${objectName}. Apply the Supabase migrations, then try again.`,
+    );
+  }
+
+  return toError(error);
+}
 
 // ---------- Roles ----------
 export const getMyRole = createServerFn({ method: "GET" })
@@ -55,7 +82,10 @@ export const listEmailAccounts = createServerFn({ method: "GET" })
       .from("email_accounts")
       .select("id, email_address, provider, last_sync_at, created_at")
       .order("created_at", { ascending: false });
-    if (error) throw error;
+    if (error) {
+      if (isMissingSupabaseSchemaError(error)) return [];
+      throw toSupabaseError(error, "public.email_accounts");
+    }
     return data ?? [];
   });
 
@@ -68,14 +98,16 @@ export const saveEmailAccount = createServerFn({ method: "POST" })
     }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    const { error } = await context.supabase.from("email_accounts").upsert({
+    const { data: account, error } = await context.supabase.from("email_accounts").upsert({
       user_id: context.userId,
       provider: "gmail",
       email_address: data.email_address,
       connection_api_key: data.connection_api_key,
-    }, { onConflict: "user_id,email_address" });
-    if (error) throw error;
-    return { ok: true };
+    }, { onConflict: "user_id,email_address" })
+      .select("id, email_address, provider, last_sync_at, created_at")
+      .single();
+    if (error) throw toSupabaseError(error, "public.email_accounts");
+    return account;
   });
 
 export const deleteEmailAccount = createServerFn({ method: "POST" })
@@ -83,7 +115,7 @@ export const deleteEmailAccount = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ context, data }) => {
     const { error } = await context.supabase.from("email_accounts").delete().eq("id", data.id);
-    if (error) throw error;
+    if (error) throw toSupabaseError(error, "public.email_accounts");
     return { ok: true };
   });
 
@@ -206,7 +238,7 @@ export const syncGmail = createServerFn({ method: "POST" })
       const { html, text } = extractBody(msg.payload);
       const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : new Date().toISOString();
 
-      await context.supabase.from("emails").insert({
+      const { error: insertErr } = await context.supabase.from("emails").insert({
         user_id: context.userId,
         account_id: account.id,
         gmail_message_id: msg.id,
@@ -223,15 +255,26 @@ export const syncGmail = createServerFn({ method: "POST" })
         is_read: !(msg.labelIds ?? []).includes("UNREAD"),
         labels: msg.labelIds ?? [],
       });
+      if (insertErr) throw toSupabaseError(insertErr, "public.emails");
       imported++;
     }
 
-    await context.supabase.from("email_accounts").update({ last_sync_at: new Date().toISOString() }).eq("id", account.id);
-    await context.supabase.from("activity_logs").insert({
+    const syncedAt = new Date().toISOString();
+    const { error: updateErr } = await context.supabase
+      .from("email_accounts")
+      .update({ last_sync_at: syncedAt })
+      .eq("id", account.id);
+    if (updateErr) throw toSupabaseError(updateErr, "public.email_accounts");
+
+    const { error: activityErr } = await context.supabase.from("activity_logs").insert({
       actor_id: context.userId, entity_type: "email_account", entity_id: account.id,
       action: "sync", metadata: { imported },
     });
-    return { imported, scanned: messageIds.length };
+    if (activityErr && isMissingSupabaseSchemaError(activityErr)) {
+      throw toSupabaseError(activityErr, "public.activity_logs");
+    }
+
+    return { imported, scanned: messageIds.length, syncedAt };
   });
 
 export const sendGmailReply = createServerFn({ method: "POST" })
