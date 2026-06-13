@@ -61,7 +61,7 @@ function Landing() {
             { Icon: Users, title: "Leads & customers", body: "Convert any sender into a lead. Move them through your pipeline." },
             { Icon: Bell, title: "Reminders", body: "Never drop a follow-up. Due dates on every contact." },
             { Icon: FileText, title: "Templates", body: "Reply 5× faster with reusable email templates." },
-            { Icon: ShieldCheck, title: "Secure OAuth", body: "Tokens managed by Lovable — we never see your password." },
+            { Icon: ShieldCheck, title: "Secure OAuth", body: "Google OAuth and Supabase Auth handle sign-in. We never see your password." },
             { Icon: Sparkles, title: "Activity timeline", body: "Every email, note & status change on each customer." },
           ].map(({ Icon, title, body }) => (
             <div key={title} className="rounded-xl border border-border bg-card p-6">
@@ -74,6 +74,16 @@ function Landing() {
           ))}
         </div>
       </section>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-6 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>Inboxly uses Google OAuth only to power the CRM features users choose.</p>
+          <div className="flex gap-4">
+            <Link to="/privacy" className="hover:text-foreground">Privacy</Link>
+            <Link to="/terms" className="hover:text-foreground">Terms</Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
