@@ -174,12 +174,7 @@ function countEmailFolderRows(rows: EmailFolderCountRow[]) {
     const state = getEmailFolderState(row);
     counts.all += 1;
     if (!state.isRead) counts.unread += 1;
-    if (
-      state.isRead &&
-      !state.isSpam &&
-      !state.isTrashed &&
-      !state.isDraft
-    ) {
+    if (state.isRead && !state.isSpam && !state.isTrashed && !state.isDraft) {
       counts.read += 1;
     }
     if (state.isStarred) counts.starred += 1;
@@ -550,6 +545,40 @@ export const saveEmailAccount = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
+    const incomingConnection = parseGmailConnection(data.connection_api_key);
+    if (!incomingConnection.accessToken) {
+      throw new Error("Google did not return a Gmail access token.");
+    }
+
+    const { data: existingAccount, error: existingError } =
+      await context.supabase
+        .from("email_accounts")
+        .select("connection_api_key")
+        .eq("user_id", context.userId)
+        .eq("email_address", data.email_address)
+        .maybeSingle();
+    if (existingError) {
+      throw toSupabaseError(existingError, "public.email_accounts");
+    }
+
+    const existingConnection = existingAccount?.connection_api_key
+      ? parseGmailConnection(existingAccount.connection_api_key)
+      : null;
+    const connection: StoredGmailConnection = {
+      accessToken: incomingConnection.accessToken,
+      refreshToken:
+        incomingConnection.refreshToken ??
+        existingConnection?.refreshToken ??
+        null,
+      expiresAt: incomingConnection.expiresAt ?? null,
+    };
+
+    if (!connection.refreshToken) {
+      throw new Error(
+        "Google did not return an offline Gmail refresh token. Reconnect Gmail again and approve all requested Gmail permissions.",
+      );
+    }
+
     const { data: account, error } = await context.supabase
       .from("email_accounts")
       .upsert(
@@ -557,7 +586,7 @@ export const saveEmailAccount = createServerFn({ method: "POST" })
           user_id: context.userId,
           provider: "gmail",
           email_address: data.email_address,
-          connection_api_key: data.connection_api_key,
+          connection_api_key: JSON.stringify(connection),
         },
         { onConflict: "user_id,email_address" },
       )
@@ -635,15 +664,50 @@ function getHeader(headers: GmailHeader[] | undefined, name: string): string {
 
 type GmailAttachmentSummary = {
   id: string;
+  legacyId?: string;
   filename: string;
   mimeType: string;
   size: number;
 };
 
 type GmailAttachmentPart = GmailAttachmentSummary & {
+  path: string;
+  partId?: string;
   gmailAttachmentId?: string;
+  contentId?: string;
   data?: string;
 };
+
+function normalizeAttachmentContentId(value: string) {
+  return value.trim().replace(/^<|>$/g, "");
+}
+
+function makeAttachmentId({
+  path,
+  partId,
+  filename,
+  mimeType,
+  size,
+  contentId,
+}: {
+  path: string;
+  partId?: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  contentId?: string;
+}) {
+  return [
+    "part",
+    partId || path,
+    filename,
+    mimeType,
+    String(size),
+    contentId || "",
+  ]
+    .map((value) => encodeURIComponent(value))
+    .join(":");
+}
 
 function collectGmailAttachments(
   payload: GmailPayload | undefined,
@@ -662,19 +726,34 @@ function collectGmailAttachments(
 
     if (looksLikeAttachment) {
       const attachmentId = body?.attachmentId;
+      const mimeType = part.mimeType ?? "application/octet-stream";
+      const size = body?.size ?? 0;
+      const contentId = normalizeAttachmentContentId(
+        getHeader(part.headers, "Content-ID"),
+      );
+      const resolvedFilename =
+        filename ||
+        `attachment-${attachments.length + 1}.${mimeType.split("/").pop()}`;
       attachments.push({
-        id: attachmentId
+        id: makeAttachmentId({
+          path,
+          partId: part.partId,
+          filename: resolvedFilename,
+          mimeType,
+          size,
+          contentId,
+        }),
+        legacyId: attachmentId
           ? `gmail:${attachmentId}`
           : `part:${part.partId ?? path}`,
+        path,
+        partId: part.partId,
         gmailAttachmentId: attachmentId,
+        contentId,
         data: body?.data,
-        filename:
-          filename ||
-          `attachment-${attachments.length + 1}.${(part.mimeType ?? "file")
-            .split("/")
-            .pop()}`,
-        mimeType: part.mimeType ?? "application/octet-stream",
-        size: body?.size ?? 0,
+        filename: resolvedFilename,
+        mimeType,
+        size,
       });
     }
 
@@ -683,6 +762,43 @@ function collectGmailAttachments(
 
   walk(payload, "0");
   return attachments;
+}
+
+function findGmailAttachment(
+  attachments: GmailAttachmentPart[],
+  lookup: {
+    attachmentId: string;
+    filename?: string;
+    mimeType?: string;
+    size?: number;
+  },
+) {
+  const exact = attachments.find((candidate) => {
+    if (candidate.id === lookup.attachmentId) return true;
+    if (candidate.legacyId === lookup.attachmentId) return true;
+    if (candidate.gmailAttachmentId === lookup.attachmentId) return true;
+    if (candidate.gmailAttachmentId) {
+      return `gmail:${candidate.gmailAttachmentId}` === lookup.attachmentId;
+    }
+    return false;
+  });
+  if (exact) return exact;
+
+  if (!lookup.filename && !lookup.mimeType) return undefined;
+
+  return attachments.find((candidate) => {
+    const filenameMatches =
+      !lookup.filename || candidate.filename === lookup.filename;
+    const mimeMatches =
+      !lookup.mimeType || candidate.mimeType === lookup.mimeType;
+    const sizeMatches =
+      lookup.size == null ||
+      lookup.size === 0 ||
+      candidate.size === 0 ||
+      candidate.size === lookup.size;
+
+    return filenameMatches && mimeMatches && sizeMatches;
+  });
 }
 
 function getGmailStatusFields(labelIds: string[], payload?: GmailPayload) {
@@ -932,6 +1048,7 @@ export const syncGmail = createServerFn({ method: "POST" })
       .object({
         accountId: z.string().uuid(),
         maxResults: z.number().min(1).max(100).optional(),
+        forceTokenRefresh: z.boolean().optional(),
       })
       .parse(input),
   )
@@ -953,6 +1070,14 @@ export const syncGmail = createServerFn({ method: "POST" })
       !isMissingSupabaseSchemaError(enhancedSchemaResult.error)
     ) {
       throw toSupabaseError(enhancedSchemaResult.error, "public.emails");
+    }
+
+    if (data.forceTokenRefresh) {
+      await getGmailAccessToken({
+        context,
+        account,
+        forceRefresh: true,
+      });
     }
 
     const listRes = await callGmailApi({
@@ -1133,6 +1258,9 @@ export const getEmailAttachment = createServerFn({ method: "POST" })
       .object({
         emailId: z.string().uuid(),
         attachmentId: z.string().min(1),
+        filename: z.string().optional(),
+        mimeType: z.string().optional(),
+        size: z.number().optional(),
       })
       .parse(input),
   )
@@ -1148,8 +1276,14 @@ export const getEmailAttachment = createServerFn({ method: "POST" })
     if (!msgRes.ok) await throwGmailError("attachment lookup", msgRes);
 
     const msg = (await msgRes.json()) as { payload?: GmailPayload };
-    const attachment = collectGmailAttachments(msg.payload).find(
-      (candidate) => candidate.id === data.attachmentId,
+    const attachment = findGmailAttachment(
+      collectGmailAttachments(msg.payload),
+      {
+        attachmentId: data.attachmentId,
+        filename: data.filename,
+        mimeType: data.mimeType,
+        size: data.size,
+      },
     );
     if (!attachment) throw new Error("Attachment not found.");
 
@@ -1159,7 +1293,9 @@ export const getEmailAttachment = createServerFn({ method: "POST" })
       const attachmentRes = await callGmailApi({
         context,
         account,
-        path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/attachments/${attachment.gmailAttachmentId}`,
+        path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/attachments/${encodeURIComponent(
+          attachment.gmailAttachmentId,
+        )}`,
       });
       if (!attachmentRes.ok)
         await throwGmailError("attachment download", attachmentRes);
@@ -1514,11 +1650,11 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
             is_archived: true,
             is_trashed: false,
             is_spam: false,
-            labels: updateLocalLabels(email.labels, [], [
-              "INBOX",
-              "TRASH",
-              "SPAM",
-            ]),
+            labels: updateLocalLabels(
+              email.labels,
+              [],
+              ["INBOX", "TRASH", "SPAM"],
+            ),
           })
           .eq("id", id);
         if (error) throw toSupabaseError(error, "public.emails");

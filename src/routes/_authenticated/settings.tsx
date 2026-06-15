@@ -45,12 +45,16 @@ function SettingsPage() {
   const invalidateEmailData = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
     qc.invalidateQueries({ queryKey: ["emails"] });
+    qc.invalidateQueries({ queryKey: ["email-folder-counts"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+    qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
   };
 
-  const showSyncResult = (result: { imported: number }) => {
+  const showSyncResult = (result: { imported: number; updated?: number }) => {
+    const refreshed = result.updated ?? 0;
     toast.success(
-      result.imported > 0
-        ? `Imported ${result.imported} email(s)`
+      result.imported > 0 || refreshed > 0
+        ? `Gmail synced: ${result.imported} new, ${refreshed} refreshed.`
         : "Gmail synced. No new emails found.",
     );
   };
@@ -63,7 +67,12 @@ function SettingsPage() {
     const connectionToken =
       getPendingGmailConnectionToken() ??
       (session ? createGmailConnectionToken(session) : null);
-    if (!session || !connectionToken) return false;
+    if (!session) return false;
+    if (!connectionToken) {
+      throw new Error(
+        "Google did not return Gmail authorization tokens. Reconnect Gmail again and approve all requested permissions.",
+      );
+    }
 
     const email = getGoogleSessionEmail(session);
     if (!email) throw new Error("Google account email was not returned.");
@@ -71,19 +80,24 @@ function SettingsPage() {
     const account = await save({
       data: { email_address: email, connection_api_key: connectionToken },
     });
-    clearPendingGmailConnectionToken();
-    localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
-    toast.success("Gmail connected. Syncing inbox...");
 
     const result = await sync({
-      data: { accountId: account.id, maxResults: 25 },
+      data: {
+        accountId: account.id,
+        maxResults: 100,
+        forceTokenRefresh: true,
+      },
     });
+    clearPendingGmailConnectionToken();
+    localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
+    toast.success("Gmail reconnected. Automatic sync is enabled.");
     showSyncResult(result);
     invalidateEmailData();
     return true;
   };
 
   const startGoogleGmailConsent = async () => {
+    clearPendingGmailConnectionToken();
     localStorage.setItem(GMAIL_CONNECT_PENDING_KEY, "1");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -92,7 +106,7 @@ function SettingsPage() {
         scopes: GMAIL_OAUTH_SCOPES,
         queryParams: {
           access_type: "offline",
-          prompt: "consent",
+          prompt: "consent select_account",
           include_granted_scopes: "true",
         },
       },
@@ -105,6 +119,7 @@ function SettingsPage() {
     try {
       await startGoogleGmailConsent();
     } catch (e) {
+      clearPendingGmailConnectionToken();
       localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
       toast.error(getErrorMessage(e, "Failed"));
       setConnecting(false);
@@ -123,6 +138,7 @@ function SettingsPage() {
       })
       .catch((e) => {
         if (!active) return;
+        clearPendingGmailConnectionToken();
         localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
         toast.error(getErrorMessage(e, "Failed"));
       })
@@ -145,7 +161,7 @@ function SettingsPage() {
 
   const syncMut = useMutation({
     mutationFn: (id: string) =>
-      sync({ data: { accountId: id, maxResults: 25 } }),
+      sync({ data: { accountId: id, maxResults: 100 } }),
     onSuccess: (result) => {
       showSyncResult(result);
       invalidateEmailData();

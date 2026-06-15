@@ -378,10 +378,7 @@ function InboxPage() {
     if (snapshot) updateCountOptimistically(() => snapshot);
   };
 
-  const applyOptimisticEmailPatch = (
-    email: Email,
-    patch: Partial<Email>,
-  ) => {
+  const applyOptimisticEmailPatch = (email: Email, patch: Partial<Email>) => {
     const after = { ...email, ...patch };
     const delta = getEmailCountDelta(email, after);
     return updateCountOptimistically((counts) =>
@@ -553,11 +550,7 @@ function InboxPage() {
         is_archived: true,
         is_spam: false,
         is_trashed: false,
-        labels: updateEmailLabels(email.labels, [], [
-          "INBOX",
-          "SPAM",
-          "TRASH",
-        ]),
+        labels: updateEmailLabels(email.labels, [], ["INBOX", "SPAM", "TRASH"]),
       });
       const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
@@ -646,7 +639,13 @@ function InboxPage() {
     setAttachmentAction({ id: attachment.id, action });
     try {
       const file = await getAttachment({
-        data: { emailId: selected.id, attachmentId: attachment.id },
+        data: {
+          emailId: selected.id,
+          attachmentId: attachment.id,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+        },
       });
       const blob = base64ToBlob(file.data, file.mimeType);
       const url = URL.createObjectURL(blob);
@@ -684,8 +683,8 @@ function InboxPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
+      <div className="mb-5 flex flex-col justify-between gap-4 sm:mb-6 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Inbox</h1>
           <p className="text-sm text-muted-foreground">
@@ -694,13 +693,14 @@ function InboxPage() {
               : `${emails.length} email(s)`}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full gap-2 sm:w-auto">
           {accounts.length === 0 ? (
-            <Button variant="outline" asChild>
+            <Button className="w-full sm:w-auto" variant="outline" asChild>
               <a href="/settings">Connect Gmail</a>
             </Button>
           ) : (
             <Button
+              className="w-full sm:w-auto"
               onClick={() => accounts[0] && syncMut.mutate(accounts[0].id)}
               disabled={syncMut.isPending}
             >
@@ -715,49 +715,51 @@ function InboxPage() {
         </div>
       </div>
 
-      <Card className="mb-4 border-border/80 p-4 shadow-sm">
+      <Card className="mb-4 border-border/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-2">
-              {EMAIL_STATUSES.map((filter) => {
-                const meta = EMAIL_STATUS_META[filter];
-                const count = folderCounts[meta.countKey];
-                const isActive = status === filter;
+            <div className="-mx-1 w-full overflow-x-auto pb-1 sm:mx-0 sm:overflow-visible sm:pb-0">
+              <div className="flex min-w-max gap-2 px-1 sm:min-w-0 sm:flex-wrap sm:px-0">
+                {EMAIL_STATUSES.map((filter) => {
+                  const meta = EMAIL_STATUS_META[filter];
+                  const count = folderCounts[meta.countKey];
+                  const isActive = status === filter;
 
-                return (
-                  <Button
-                    key={filter}
-                    variant={isActive ? "default" : "outline"}
-                    size="sm"
-                    asChild
-                  >
-                    <Link
-                      to="/inbox"
-                      search={{ status: filter }}
-                      title={`${meta.description} Current count: ${count}.`}
+                  return (
+                    <Button
+                      key={filter}
+                      variant={isActive ? "default" : "outline"}
+                      size="sm"
+                      asChild
                     >
-                      <span>{meta.label}</span>
-                      {folderCountsLoading ? (
-                        <span
-                          className={`ml-2 h-4 w-7 animate-pulse rounded-full ${
-                            isActive ? "bg-primary-foreground/30" : "bg-muted"
-                          }`}
-                        />
-                      ) : (
-                        <span
-                          className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            isActive
-                              ? "bg-primary-foreground/20 text-primary-foreground"
-                              : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          {formatFolderCount(count)}
-                        </span>
-                      )}
-                    </Link>
-                  </Button>
-                );
-              })}
+                      <Link
+                        to="/inbox"
+                        search={{ status: filter }}
+                        title={`${meta.description} Current count: ${count}.`}
+                      >
+                        <span>{meta.label}</span>
+                        {folderCountsLoading ? (
+                          <span
+                            className={`ml-2 h-4 w-7 animate-pulse rounded-full ${
+                              isActive ? "bg-primary-foreground/30" : "bg-muted"
+                            }`}
+                          />
+                        ) : (
+                          <span
+                            className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              isActive
+                                ? "bg-primary-foreground/20 text-primary-foreground"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {formatFolderCount(count)}
+                          </span>
+                        )}
+                      </Link>
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
             {folderCountsError && (
               <Button
@@ -775,8 +777,8 @@ function InboxPage() {
             Spam and Trash until Gmail permanently deletes them.
           </p>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <div className="relative flex-1 min-w-[240px]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+          <div className="relative min-w-0 flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-9"
@@ -787,12 +789,12 @@ function InboxPage() {
           </div>
           <Input
             type="date"
-            className="w-44"
+            className="w-full sm:w-44"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
           />
           {selectedIds.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <Button
                 size="sm"
                 variant="outline"
@@ -1131,10 +1133,10 @@ function InboxPage() {
         open={!!selected}
         onOpenChange={(open) => !open && setSelected(null)}
       >
-        <DialogContent className="flex h-[min(90vh,860px)] w-[calc(100%-1.5rem)] max-w-4xl flex-col gap-0 overflow-hidden border-border/70 bg-background p-0 shadow-2xl sm:rounded-2xl">
+        <DialogContent className="flex h-[100dvh] w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-border/70 bg-background p-0 shadow-2xl sm:h-[min(90dvh,860px)] sm:w-[calc(100%-2rem)] sm:max-w-4xl sm:rounded-2xl">
           {selected && (
             <>
-              <DialogHeader className="border-b bg-card px-5 py-5 pr-14 text-left sm:px-7">
+              <DialogHeader className="border-b bg-card px-4 py-4 pr-12 text-left sm:px-7 sm:py-5 sm:pr-14">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge
                     variant="outline"
@@ -1156,7 +1158,7 @@ function InboxPage() {
                     <Badge variant="secondary">Customer</Badge>
                   )}
                 </div>
-                <DialogTitle className="pt-2 text-xl leading-snug sm:text-2xl">
+                <DialogTitle className="break-words pt-2 text-lg leading-snug sm:text-2xl">
                   {selected.subject || "(no subject)"}
                 </DialogTitle>
                 <DialogDescription className="sr-only">
@@ -1181,7 +1183,7 @@ function InboxPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground sm:shrink-0">
                     <span className="flex items-center gap-1.5">
                       <CalendarDays className="h-3.5 w-3.5" />
                       {format(new Date(selected.received_at), "MMM d, yyyy")}
@@ -1194,7 +1196,7 @@ function InboxPage() {
                 </div>
               </DialogHeader>
 
-              <div className="flex shrink-0 items-center justify-between gap-3 overflow-x-auto border-b bg-muted/30 px-4 py-3 sm:px-7">
+              <div className="flex shrink-0 flex-col gap-3 overflow-x-auto border-b bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-7">
                 <div className="flex items-center gap-1">
                   <Button
                     size="icon"
@@ -1221,7 +1223,7 @@ function InboxPage() {
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:overflow-visible sm:pb-0">
                   <Button
                     size="icon"
                     variant="ghost"
@@ -1307,15 +1309,19 @@ function InboxPage() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="space-y-6 p-5 sm:p-7">
+                <div className="space-y-5 p-4 sm:space-y-6 sm:p-7">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">To:</span>
-                    <span>{selected.to_emails.join(", ") || "Me"}</span>
+                    <span className="break-all">
+                      {selected.to_emails.join(", ") || "Me"}
+                    </span>
                     {selected.cc_emails.length > 0 && (
                       <>
                         <span className="mx-1 text-border">|</span>
                         <span className="font-medium text-foreground">Cc:</span>
-                        <span>{selected.cc_emails.join(", ")}</span>
+                        <span className="break-all">
+                          {selected.cc_emails.join(", ")}
+                        </span>
                       </>
                     )}
                   </div>
@@ -1327,7 +1333,7 @@ function InboxPage() {
                     onAction={handleAttachmentAction}
                   />
                   <article
-                    className={`prose prose-sm dark:prose-invert max-w-none overflow-hidden rounded-xl border border-border/80 bg-card p-5 leading-relaxed shadow-sm sm:p-7 ${
+                    className={`prose prose-sm dark:prose-invert max-w-none overflow-x-auto break-words rounded-xl border border-border/80 bg-card p-4 leading-relaxed shadow-sm sm:p-7 [&_img]:h-auto [&_img]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full [&_table]:overflow-x-auto ${
                       selected.body_html ? "" : "whitespace-pre-wrap"
                     }`}
                     dangerouslySetInnerHTML={{
@@ -1399,7 +1405,7 @@ function EmailAttachments({
   if (attachments.length === 0) return null;
 
   return (
-    <section className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+    <section className="rounded-xl border border-border/80 bg-card p-3 shadow-sm sm:p-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <Paperclip className="h-4 w-4 text-primary" />
         Attachments ({attachments.length})
@@ -1417,19 +1423,20 @@ function EmailAttachments({
                   <FileText className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
+                  <p className="break-all text-sm font-medium sm:truncate">
                     {attachment.filename}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="break-all text-xs text-muted-foreground sm:truncate">
                     {attachment.mimeType} /{" "}
                     {formatAttachmentSize(attachment.size)}
                   </p>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:justify-end">
                 <Button
                   size="sm"
                   variant="outline"
+                  className="w-full sm:w-auto"
                   disabled={!!pendingAction}
                   onClick={() => onAction(attachment, "view")}
                 >
@@ -1443,6 +1450,7 @@ function EmailAttachments({
                 <Button
                   size="sm"
                   variant="outline"
+                  className="w-full sm:w-auto"
                   disabled={!!pendingAction}
                   onClick={() => onAction(attachment, "download")}
                 >
@@ -1456,6 +1464,7 @@ function EmailAttachments({
                 <Button
                   size="sm"
                   variant="outline"
+                  className="w-full sm:w-auto"
                   disabled={!!pendingAction}
                   onClick={() => onAction(attachment, "print")}
                 >

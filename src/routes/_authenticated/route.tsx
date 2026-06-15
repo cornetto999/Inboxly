@@ -47,10 +47,10 @@ function AuthedLayout() {
     <SidebarProvider>
       <AutoGmailSync />
       <RealtimeQuerySync />
-      <div className="flex min-h-screen w-full bg-background">
+      <div className="flex min-h-screen w-full min-w-0 bg-background">
         <AppSidebar isAdmin={isAdmin} />
-        <div className="flex flex-1 flex-col">
-          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/80 bg-background/85 px-4 backdrop-blur-xl lg:px-6">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/80 bg-background/85 px-3 backdrop-blur-xl sm:px-4 lg:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <SidebarTrigger className="h-9 w-9 rounded-lg border border-border bg-card shadow-sm" />
               <div className="min-w-0">
@@ -69,7 +69,7 @@ function AuthedLayout() {
               {isAdmin ? "Admin" : "Staff"}
             </Badge>
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
             <Outlet />
           </main>
         </div>

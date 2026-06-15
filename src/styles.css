@@ -133,6 +133,13 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
   * {
     border-color: var(--color-border);
   }

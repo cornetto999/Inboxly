@@ -11,6 +11,7 @@ import {
 import { getErrorMessage, toError } from "@/lib/errors";
 
 export const Route = createFileRoute("/auth/callback")({
+  ssr: false,
   head: () => ({ meta: [{ title: "Signing in - Inboxly" }] }),
   component: AuthCallbackPage,
 });
