@@ -1,9 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { listCustomers } from "@/lib/crm.functions";
 import { Card } from "@/components/ui/card";
-import { UserCheck } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ArrowUpRight, Building2, Mail, Search, UserCheck } from "lucide-react";
 import { format } from "date-fns";
 
 export const Route = createFileRoute("/_authenticated/customers/")({
@@ -13,34 +23,110 @@ export const Route = createFileRoute("/_authenticated/customers/")({
 
 function CustomersPage() {
   const fn = useServerFn(listCustomers);
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: () => fn() });
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers"],
+    queryFn: () => fn(),
+  });
+  const [search, setSearch] = useState("");
+  const filtered = customers.filter((customer) =>
+    `${customer.name ?? ""} ${customer.email} ${customer.company ?? ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
 
   return (
-    <div className="p-6 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
-        <p className="text-sm text-muted-foreground">{customers.length} total</p>
+    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+          <p className="text-sm text-muted-foreground">
+            {filtered.length} shown from {customers.length} total
+          </p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm">
+          <span className="text-muted-foreground">Active accounts</span>
+          <span className="ml-3 font-semibold tabular-nums">
+            {customers.length}
+          </span>
+        </div>
       </div>
-      {customers.length === 0 ? (
-        <Card className="p-12 text-center">
-          <UserCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+
+      <Card className="mb-4 border-border/80 p-4 shadow-sm">
+        <div className="relative max-w-xl">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search customers"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+      </Card>
+
+      {filtered.length === 0 ? (
+        <Card className="border-dashed p-12 text-center shadow-sm">
+          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
+            <UserCheck className="h-6 w-6 text-muted-foreground" />
+          </div>
           <p className="font-medium">No customers yet</p>
-          <p className="text-sm text-muted-foreground">Convert leads or emails into customers.</p>
+          <p className="text-sm text-muted-foreground">
+            Convert leads or emails into customers.
+          </p>
         </Card>
       ) : (
-        <Card>
-          <div className="divide-y">
-            {customers.map((c) => (
-              <Link key={c.id} to="/customers/$id" params={{ id: c.id }} className="flex items-center gap-3 p-4 hover:bg-muted/50">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{c.name || c.email}</div>
-                  <div className="text-sm text-muted-foreground truncate">{c.email}{c.company ? ` · ${c.company}` : ""}</div>
-                </div>
-                <div className="text-xs text-muted-foreground">{format(new Date(c.created_at), "MMM d, yyyy")}</div>
-              </Link>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Customer</TableHead>
+              <TableHead>Company</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Created</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell>
+                  <Link
+                    to="/customers/$id"
+                    params={{ id: c.id }}
+                    className="group flex min-w-[220px] items-center gap-3"
+                  >
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                      {(c.name || c.email).slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1 font-medium group-hover:text-primary">
+                        <span className="truncate">{c.name || c.email}</span>
+                        <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </div>
+                      <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
+                        <Mail className="h-3.5 w-3.5" />
+                        <span className="truncate">{c.email}</span>
+                      </div>
+                    </div>
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  <div className="flex min-w-[140px] items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    <span className="truncate">
+                      {c.company || "Unassigned"}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                    {c.status}
+                  </span>
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">
+                  {format(new Date(c.created_at), "MMM d, yyyy")}
+                </TableCell>
+              </TableRow>
             ))}
-          </div>
-        </Card>
+          </TableBody>
+        </Table>
       )}
     </div>
   );

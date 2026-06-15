@@ -1,24 +1,78 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
-  LayoutDashboard, Inbox, Users, UserCheck, Bell, FileText, Settings, Shield, LogOut,
+  LayoutDashboard,
+  Inbox,
+  Users,
+  UserCheck,
+  Bell,
+  FileText,
+  Megaphone,
+  ContactRound,
+  ListTodo,
+  ChartNoAxesCombined,
+  UserCog,
+  Settings,
+  Shield,
+  LogOut,
+  Sparkles,
 } from "lucide-react";
 import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarHeader,
+  SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { supabase } from "@/integrations/supabase/client";
-import { useQueryClient } from "@tanstack/react-query";
+import { getSidebarCounters } from "@/lib/crm.functions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 
 const nav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Inbox", url: "/inbox", icon: Inbox },
-  { title: "Leads", url: "/leads", icon: Users },
-  { title: "Customers", url: "/customers", icon: UserCheck },
-  { title: "Reminders", url: "/reminders", icon: Bell },
-  { title: "Templates", url: "/templates", icon: FileText },
+  { title: "Inbox", url: "/inbox", icon: Inbox, counter: "inbox" },
+  { title: "Leads", url: "/leads", icon: Users, counter: "leads" },
+  {
+    title: "Customers",
+    url: "/customers",
+    icon: UserCheck,
+    counter: "customers",
+  },
+  { title: "Reminders", url: "/reminders", icon: Bell, counter: "reminders" },
+  {
+    title: "Templates",
+    url: "/templates",
+    icon: FileText,
+    counter: "templates",
+  },
+  {
+    title: "Campaigns",
+    url: "/campaigns",
+    icon: Megaphone,
+    counter: "campaigns",
+  },
+  { title: "Contacts", url: "/contacts", icon: ContactRound },
+  { title: "Tasks", url: "/tasks", icon: ListTodo, counter: "tasks" },
+  { title: "Reports", url: "/reports", icon: ChartNoAxesCombined },
+  { title: "Team", url: "/team", icon: UserCog },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
+
+type CounterKey =
+  | "inbox"
+  | "leads"
+  | "customers"
+  | "reminders"
+  | "templates"
+  | "tasks"
+  | "campaigns";
 
 export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const { state } = useSidebar();
@@ -26,11 +80,65 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const countersFn = useServerFn(getSidebarCounters);
   const [email, setEmail] = useState<string>("");
+  const { data: counters } = useQuery({
+    queryKey: ["sidebar-counters"],
+    queryFn: () => countersFn(),
+    refetchInterval: 30000,
+    retry: false,
+  });
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? ""));
+    supabase.auth
+      .getUser()
+      .then(({ data }) => setEmail(data.user?.email ?? ""));
   }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("sidebar-counters")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "emails" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "customers" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reminders" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tasks" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "campaigns" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "email_templates" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const signOut = async () => {
     await qc.cancelQueries();
@@ -44,26 +152,49 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <Link to="/dashboard" className="flex items-center gap-2 px-2 py-2 font-semibold">
-          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+      <SidebarHeader className="gap-3 border-b border-sidebar-border p-3">
+        <Link
+          to="/dashboard"
+          className="flex h-11 items-center gap-2 rounded-lg px-2 font-semibold text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        >
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
             <Inbox className="h-4 w-4" />
           </div>
-          {!collapsed && <span>Inboxly</span>}
+          {!collapsed && (
+            <div className="min-w-0">
+              <span className="block leading-tight">Inboxly</span>
+              <span className="flex items-center gap-1 text-xs font-normal text-sidebar-foreground/65">
+                <Sparkles className="h-3 w-3" />
+                Gmail CRM
+              </span>
+            </div>
+          )}
         </Link>
       </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+      <SidebarContent className="gap-4 px-2 py-3">
+        <SidebarGroup className="p-0">
+          <SidebarGroupLabel className="px-3 text-[0.7rem] font-semibold uppercase text-sidebar-foreground/55">
+            Workspace
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {nav.map((item) => (
                 <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive(item.url)}
+                    tooltip={item.title}
+                    className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-primary data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary-foreground data-[active=true]:shadow-sm"
+                  >
                     <Link to={item.url}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
+                      {!collapsed && item.counter && (
+                        <span className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground">
+                          {counters?.[item.counter as CounterKey] ?? 0}
+                        </span>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -73,12 +204,19 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
         </SidebarGroup>
 
         {isAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+          <SidebarGroup className="p-0">
+            <SidebarGroupLabel className="px-3 text-[0.7rem] font-semibold uppercase text-sidebar-foreground/55">
+              Admin
+            </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={isActive("/admin")}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive("/admin")}
+                    tooltip="Admin Console"
+                    className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-primary data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary-foreground data-[active=true]:shadow-sm"
+                  >
                     <Link to="/admin">
                       <Shield className="h-4 w-4" />
                       <span>Admin Console</span>
@@ -91,11 +229,24 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
         )}
       </SidebarContent>
 
-      <SidebarFooter>
-        <div className="px-2 py-1 text-xs text-muted-foreground truncate">{!collapsed && email}</div>
+      <SidebarFooter className="border-t border-sidebar-border p-3">
+        {!collapsed && (
+          <div className="rounded-lg bg-sidebar-accent/70 px-3 py-2">
+            <div className="text-xs font-medium text-sidebar-foreground">
+              Signed in
+            </div>
+            <div className="truncate text-xs text-sidebar-foreground/65">
+              {email}
+            </div>
+          </div>
+        )}
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={signOut}>
+            <SidebarMenuButton
+              onClick={signOut}
+              tooltip="Sign out"
+              className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
               <LogOut className="h-4 w-4" />
               <span>Sign out</span>
             </SidebarMenuButton>

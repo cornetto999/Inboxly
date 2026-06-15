@@ -1,11 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { adminListUsers, adminListActivity, adminSetRole } from "@/lib/crm.functions";
+import {
+  adminListUsers,
+  adminListActivity,
+  adminSetRole,
+} from "@/lib/crm.functions";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -20,57 +32,125 @@ function AdminPage() {
   const actFn = useServerFn(adminListActivity);
   const setRole = useServerFn(adminSetRole);
 
-  const { data: users = [], error: ue } = useQuery({ queryKey: ["admin-users"], queryFn: () => usersFn() });
-  const { data: activity = [] } = useQuery({ queryKey: ["admin-activity"], queryFn: () => actFn() });
-
-  const roleMut = useMutation({
-    mutationFn: (v: { user_id: string; role: "admin" | "staff"; grant: boolean }) => setRole({ data: v }),
-    onSuccess: () => { toast.success("Role updated"); qc.invalidateQueries({ queryKey: ["admin-users"] }); },
+  const { data: users = [], error: ue } = useQuery({
+    queryKey: ["admin-users"],
+    queryFn: () => usersFn(),
+  });
+  const { data: activity = [] } = useQuery({
+    queryKey: ["admin-activity"],
+    queryFn: () => actFn(),
   });
 
-  if (ue) return <div className="p-8 text-destructive">{(ue as Error).message}</div>;
+  const roleMut = useMutation({
+    mutationFn: (v: {
+      user_id: string;
+      role: "admin" | "staff";
+      grant: boolean;
+    }) => setRole({ data: v }),
+    onSuccess: () => {
+      toast.success("Role updated");
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
+  if (ue)
+    return <div className="p-8 text-destructive">{(ue as Error).message}</div>;
 
   return (
-    <div className="p-6 lg:p-8">
-      <h1 className="mb-6 text-2xl font-bold tracking-tight">Admin Console</h1>
-      <Tabs defaultValue="users">
-        <TabsList>
+    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight">Admin Console</h1>
+        <p className="text-sm text-muted-foreground">
+          Manage user access and audit recent CRM activity.
+        </p>
+      </div>
+      <Tabs defaultValue="users" className="space-y-4">
+        <TabsList className="h-10 bg-card shadow-sm">
           <TabsTrigger value="users">Users ({users.length})</TabsTrigger>
-          <TabsTrigger value="activity">Activity ({activity.length})</TabsTrigger>
+          <TabsTrigger value="activity">
+            Activity ({activity.length})
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="users" className="mt-4">
-          <Card>
-            <div className="divide-y">
+        <TabsContent value="users">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>User</TableHead>
+                <TableHead>Roles</TableHead>
+                <TableHead className="text-right">Access</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {users.map((u) => {
                 const isAdmin = u.roles.includes("admin");
                 return (
-                  <div key={u.id} className="flex items-center gap-3 p-4">
-                    <div className="flex-1">
-                      <div className="font-medium">{u.full_name || u.email}</div>
-                      <div className="text-sm text-muted-foreground">{u.email}</div>
-                    </div>
-                    <div className="flex gap-1">{u.roles.map((r) => <Badge key={r} variant="secondary">{r}</Badge>)}</div>
-                    <Button size="sm" variant="outline" onClick={() => roleMut.mutate({ user_id: u.id, role: "admin", grant: !isAdmin })}>
-                      {isAdmin ? "Revoke admin" : "Make admin"}
-                    </Button>
-                  </div>
+                  <TableRow key={u.id}>
+                    <TableCell>
+                      <div className="flex min-w-[220px] items-center gap-3">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                          {(u.full_name || u.email).slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">
+                            {u.full_name || u.email}
+                          </div>
+                          <div className="truncate text-sm text-muted-foreground">
+                            {u.email}
+                          </div>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {u.roles.map((r) => (
+                          <Badge key={r} variant="secondary">
+                            {r}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant={isAdmin ? "outline" : "default"}
+                        onClick={() =>
+                          roleMut.mutate({
+                            user_id: u.id,
+                            role: "admin",
+                            grant: !isAdmin,
+                          })
+                        }
+                      >
+                        {isAdmin ? "Revoke admin" : "Make admin"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </div>
-          </Card>
+            </TableBody>
+          </Table>
         </TabsContent>
 
-        <TabsContent value="activity" className="mt-4">
-          <Card>
-            <div className="divide-y">
+        <TabsContent value="activity">
+          <Card className="overflow-hidden">
+            <div className="divide-y divide-border">
               {activity.map((a) => (
-                <div key={a.id} className="flex items-center justify-between p-3 text-sm">
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between gap-4 p-4 text-sm"
+                >
                   <div>
-                    <span className="font-medium">{a.action.replace(/_/g, " ")}</span>
-                    <span className="ml-2 text-muted-foreground">{a.entity_type}</span>
+                    <div className="font-medium capitalize">
+                      {a.action.replace(/_/g, " ")}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {a.entity_type}
+                    </div>
                   </div>
-                  <span className="text-xs text-muted-foreground">{format(new Date(a.created_at), "PPp")}</span>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {format(new Date(a.created_at), "PPp")}
+                  </span>
                 </div>
               ))}
             </div>

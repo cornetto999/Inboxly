@@ -2,7 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { listEmailAccounts, saveEmailAccount, deleteEmailAccount, syncGmail } from "@/lib/crm.functions";
+import {
+  listEmailAccounts,
+  saveEmailAccount,
+  deleteEmailAccount,
+  syncGmail,
+} from "@/lib/crm.functions";
 import { supabase } from "@/integrations/supabase/client";
 import {
   clearPendingGmailConnectionToken,
@@ -15,7 +20,8 @@ import {
 import { getErrorMessage, toError } from "@/lib/errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Mail, Trash2, Loader2, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Mail, Trash2, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -30,7 +36,10 @@ function SettingsPage() {
   const save = useServerFn(saveEmailAccount);
   const sync = useServerFn(syncGmail);
   const del = useServerFn(deleteEmailAccount);
-  const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: () => list() });
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => list(),
+  });
   const [connecting, setConnecting] = useState(false);
 
   const invalidateEmailData = () => {
@@ -59,12 +68,16 @@ function SettingsPage() {
     const email = getGoogleSessionEmail(session);
     if (!email) throw new Error("Google account email was not returned.");
 
-    const account = await save({ data: { email_address: email, connection_api_key: connectionToken } });
+    const account = await save({
+      data: { email_address: email, connection_api_key: connectionToken },
+    });
     clearPendingGmailConnectionToken();
     localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
     toast.success("Gmail connected. Syncing inbox...");
 
-    const result = await sync({ data: { accountId: account.id, maxResults: 25 } });
+    const result = await sync({
+      data: { accountId: account.id, maxResults: 25 },
+    });
     showSyncResult(result);
     invalidateEmailData();
     return true;
@@ -119,11 +132,15 @@ function SettingsPage() {
 
   const rm = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
-    onSuccess: () => { toast.success("Disconnected"); qc.invalidateQueries({ queryKey: ["accounts"] }); },
+    onSuccess: () => {
+      toast.success("Disconnected");
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
   });
 
   const syncMut = useMutation({
-    mutationFn: (id: string) => sync({ data: { accountId: id, maxResults: 25 } }),
+    mutationFn: (id: string) =>
+      sync({ data: { accountId: id, maxResults: 25 } }),
     onSuccess: (result) => {
       showSyncResult(result);
       invalidateEmailData();
@@ -132,17 +149,35 @@ function SettingsPage() {
   });
 
   return (
-    <div className="p-6 lg:p-8 max-w-3xl">
+    <div className="mx-auto max-w-4xl p-5 lg:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">Connect your email accounts.</p>
+        <p className="text-sm text-muted-foreground">
+          Connect your email accounts.
+        </p>
       </div>
 
-      <Card className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold flex items-center gap-2"><Mail className="h-4 w-4" /> Gmail</h2>
-            <p className="text-sm text-muted-foreground">Sync your inbox using secure OAuth — no passwords stored.</p>
+      <Card className="space-y-5 border-border/80 p-5 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Mail className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-semibold">Gmail</h2>
+                <Badge
+                  variant="outline"
+                  className="border-primary/20 bg-primary/10 text-primary"
+                >
+                  <ShieldCheck className="mr-1 h-3 w-3" />
+                  OAuth
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Sync your inbox using secure OAuth. No passwords are stored.
+              </p>
+            </div>
           </div>
           <Button onClick={handleConnect} disabled={connecting}>
             {connecting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -151,13 +186,18 @@ function SettingsPage() {
         </div>
 
         {accounts.length > 0 && (
-          <div className="divide-y border-t pt-2">
+          <div className="divide-y divide-border overflow-hidden rounded-lg border bg-background">
             {accounts.map((a) => (
-              <div key={a.id} className="flex items-center justify-between py-3">
-                <div>
+              <div
+                key={a.id}
+                className="flex items-center justify-between gap-4 p-4"
+              >
+                <div className="min-w-0">
                   <div className="font-medium">{a.email_address}</div>
                   <div className="text-xs text-muted-foreground">
-                    {a.last_sync_at ? `Last sync ${format(new Date(a.last_sync_at), "PPp")}` : "Not synced yet"}
+                    {a.last_sync_at
+                      ? `Last sync ${format(new Date(a.last_sync_at), "PPp")}`
+                      : "Not synced yet"}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -175,7 +215,13 @@ function SettingsPage() {
                       <RefreshCw className="h-4 w-4" />
                     )}
                   </Button>
-                  <Button size="icon" variant="ghost" onClick={() => rm.mutate(a.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => rm.mutate(a.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             ))}

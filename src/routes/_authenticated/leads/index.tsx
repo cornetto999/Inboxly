@@ -8,13 +8,28 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Trash2, Users } from "lucide-react";
+import {
+  ArrowUpRight,
+  Building2,
+  Mail,
+  Search,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -41,11 +56,11 @@ const STATUS_LABEL: Record<string, string> = {
   lost: "Lost",
 };
 const STATUS_COLOR: Record<string, string> = {
-  new: "bg-blue-500/10 text-blue-600",
-  contacted: "bg-amber-500/10 text-amber-600",
-  follow_up: "bg-purple-500/10 text-purple-600",
-  won: "bg-emerald-500/10 text-emerald-600",
-  lost: "bg-rose-500/10 text-rose-600",
+  new: "border-sky-500/20 bg-sky-500/10 text-sky-700",
+  contacted: "border-amber-500/20 bg-amber-500/10 text-amber-700",
+  follow_up: "border-indigo-500/20 bg-indigo-500/10 text-indigo-700",
+  won: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700",
+  lost: "border-rose-500/20 bg-rose-500/10 text-rose-700",
 };
 
 function LeadsPage() {
@@ -88,14 +103,32 @@ function LeadsPage() {
   });
 
   return (
-    <div className="p-6 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Leads</h1>
-        <p className="text-sm text-muted-foreground">{leads.length} total</p>
+    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Leads</h1>
+          <p className="text-sm text-muted-foreground">
+            {filtered.length} shown from {leads.length} total
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2 text-sm shadow-sm">
+          <div className="px-3 py-2">
+            <div className="text-xs text-muted-foreground">Won</div>
+            <div className="font-semibold tabular-nums">
+              {leads.filter((lead) => lead.status === "won").length}
+            </div>
+          </div>
+          <div className="border-l px-3 py-2">
+            <div className="text-xs text-muted-foreground">Follow-up</div>
+            <div className="font-semibold tabular-nums">
+              {leads.filter((lead) => lead.status === "follow_up").length}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <Card className="mb-4 p-4">
-        <div className="flex flex-wrap gap-3">
+      <Card className="mb-4 border-border/80 p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -122,68 +155,104 @@ function LeadsPage() {
       </Card>
 
       {filtered.length === 0 ? (
-        <Card className="p-12 text-center">
-          <Users className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+        <Card className="border-dashed p-12 text-center shadow-sm">
+          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
+            <Users className="h-6 w-6 text-muted-foreground" />
+          </div>
           <p className="font-medium">No leads</p>
           <p className="text-sm text-muted-foreground">
             Convert emails from your inbox to create leads.
           </p>
         </Card>
       ) : (
-        <Card>
-          <div className="divide-y">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Lead</TableHead>
+              <TableHead>Company</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-16 text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {filtered.map((l) => (
-              <div key={l.id} className="flex items-center gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <Link to="/leads/$id" params={{ id: l.id }} className="block">
-                    <div className="font-medium hover:underline">
-                      {l.name || l.email}
+              <TableRow key={l.id}>
+                <TableCell>
+                  <Link
+                    to="/leads/$id"
+                    params={{ id: l.id }}
+                    className="group flex min-w-[220px] items-center gap-3"
+                  >
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                      {(l.name || l.email).slice(0, 1).toUpperCase()}
                     </div>
-                    <div className="text-sm text-muted-foreground truncate">
-                      {l.email}
-                      {l.company ? ` · ${l.company}` : ""}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Created {format(new Date(l.created_at), "MMM d, yyyy")}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1 font-medium group-hover:text-primary">
+                        <span className="truncate">{l.name || l.email}</span>
+                        <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </div>
+                      <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
+                        <Mail className="h-3.5 w-3.5" />
+                        <span className="truncate">{l.email}</span>
+                      </div>
                     </div>
                   </Link>
-                </div>
-                <Select
-                  value={l.status}
-                  onValueChange={(v) =>
-                    updMut.mutate({
-                      id: l.id,
-                      status: v as (typeof STATUSES)[number],
-                    })
-                  }
-                >
-                  <SelectTrigger className="w-36">
-                    <Badge
-                      className={STATUS_COLOR[l.status]}
-                      variant="secondary"
-                    >
-                      {STATUS_LABEL[l.status]}
-                    </Badge>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => confirm("Delete lead?") && delMut.mutate(l.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  <div className="flex min-w-[140px] items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    <span className="truncate">
+                      {l.company || "Unassigned"}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">
+                  {format(new Date(l.created_at), "MMM d, yyyy")}
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={l.status}
+                    onValueChange={(v) =>
+                      updMut.mutate({
+                        id: l.id,
+                        status: v as (typeof STATUSES)[number],
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-40 border-transparent bg-transparent shadow-none hover:bg-muted">
+                      <Badge
+                        className={STATUS_COLOR[l.status]}
+                        variant="secondary"
+                      >
+                        {STATUS_LABEL[l.status]}
+                      </Badge>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {STATUS_LABEL[s]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete ${l.name || l.email}`}
+                    onClick={() =>
+                      confirm("Delete lead?") && delMut.mutate(l.id)
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
-          </div>
-        </Card>
+          </TableBody>
+        </Table>
       )}
     </div>
   );
