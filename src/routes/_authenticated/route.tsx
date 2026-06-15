@@ -6,6 +6,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { getMyRole } from "@/lib/crm.functions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AutoGmailSync } from "@/components/auto-gmail-sync";
+import { RealtimeQuerySync } from "@/components/realtime-query-sync";
 import { Badge } from "@/components/ui/badge";
 
 export const Route = createFileRoute("/_authenticated")({
@@ -43,6 +45,8 @@ function AuthedLayout() {
 
   return (
     <SidebarProvider>
+      <AutoGmailSync />
+      <RealtimeQuerySync />
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar isAdmin={isAdmin} />
         <div className="flex flex-1 flex-col">

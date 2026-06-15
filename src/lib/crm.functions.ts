@@ -96,6 +96,103 @@ type EmailAnalyticsRow = {
   created_at?: string | null;
 };
 
+const EMAIL_FOLDER_COUNT_KEYS = [
+  "all",
+  "unread",
+  "read",
+  "starred",
+  "sent",
+  "drafts",
+  "archived",
+  "spam",
+  "trash",
+] as const;
+
+export type EmailFolderCountKey = (typeof EMAIL_FOLDER_COUNT_KEYS)[number];
+export type EmailFolderCounts = Record<EmailFolderCountKey, number>;
+
+export const EMPTY_EMAIL_FOLDER_COUNTS: EmailFolderCounts =
+  EMAIL_FOLDER_COUNT_KEYS.reduce(
+    (counts, key) => ({ ...counts, [key]: 0 }),
+    {} as EmailFolderCounts,
+  );
+
+type EmailFolderCountRow = {
+  is_read?: boolean | null;
+  is_starred?: boolean | null;
+  is_sent?: boolean | null;
+  is_draft?: boolean | null;
+  is_archived?: boolean | null;
+  is_spam?: boolean | null;
+  is_trashed?: boolean | null;
+  labels?: unknown;
+};
+
+function normalizeLabels(labels: unknown) {
+  if (!Array.isArray(labels)) return [];
+  return labels
+    .filter((label): label is string => typeof label === "string")
+    .map((label) => label.toUpperCase());
+}
+
+function getEmailFolderState(row: EmailFolderCountRow) {
+  const labels = normalizeLabels(row.labels);
+  const hasLabels = labels.length > 0;
+  const hasLabel = (label: string) => labels.includes(label);
+  const isSent = Boolean(row.is_sent) || hasLabel("SENT");
+  const isDraft = Boolean(row.is_draft) || hasLabel("DRAFT");
+  const isSpam = Boolean(row.is_spam) || hasLabel("SPAM");
+  const isTrashed = Boolean(row.is_trashed) || hasLabel("TRASH");
+  const isArchived =
+    (Boolean(row.is_archived) ||
+      (hasLabels &&
+        !hasLabel("INBOX") &&
+        !hasLabel("SENT") &&
+        !hasLabel("DRAFT") &&
+        !hasLabel("SPAM") &&
+        !hasLabel("TRASH"))) &&
+    !isSent &&
+    !isDraft &&
+    !isSpam &&
+    !isTrashed;
+
+  return {
+    isRead: Boolean(row.is_read),
+    isStarred: Boolean(row.is_starred) || hasLabel("STARRED"),
+    isSent,
+    isDraft,
+    isArchived,
+    isSpam,
+    isTrashed,
+  };
+}
+
+function countEmailFolderRows(rows: EmailFolderCountRow[]) {
+  const counts = { ...EMPTY_EMAIL_FOLDER_COUNTS };
+
+  for (const row of rows) {
+    const state = getEmailFolderState(row);
+    counts.all += 1;
+    if (!state.isRead) counts.unread += 1;
+    if (
+      state.isRead &&
+      !state.isSpam &&
+      !state.isTrashed &&
+      !state.isDraft
+    ) {
+      counts.read += 1;
+    }
+    if (state.isStarred) counts.starred += 1;
+    if (state.isSent) counts.sent += 1;
+    if (state.isDraft) counts.drafts += 1;
+    if (state.isArchived) counts.archived += 1;
+    if (state.isSpam) counts.spam += 1;
+    if (state.isTrashed) counts.trash += 1;
+  }
+
+  return counts;
+}
+
 function isSentEmail(row: EmailAnalyticsRow) {
   return (
     Boolean(row.is_sent) ||
@@ -391,6 +488,42 @@ export const getSidebarCounters = createServerFn({ method: "GET" })
     };
   });
 
+export const getEmailFolderCounts = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ accountId: z.string().uuid().optional() }).parse(input ?? {}),
+  )
+  .handler(async ({ context, data }) => {
+    const selectEmails = (columns: string) => {
+      let query = context.supabase.from("emails").select(columns);
+      if (data.accountId) query = query.eq("account_id", data.accountId);
+      return query;
+    };
+
+    const enhancedResult = await selectEmails(
+      "is_read, is_starred, is_sent, is_draft, is_archived, is_spam, is_trashed, labels",
+    );
+
+    if (!enhancedResult.error) {
+      return countEmailFolderRows(
+        (enhancedResult.data ?? []) as EmailFolderCountRow[],
+      );
+    }
+
+    if (!isMissingSupabaseSchemaError(enhancedResult.error)) {
+      throw toSupabaseError(enhancedResult.error, "public.emails");
+    }
+
+    const legacyResult = await selectEmails("is_read, labels");
+    if (legacyResult.error) {
+      throw toSupabaseError(legacyResult.error, "public.emails");
+    }
+
+    return countEmailFolderRows(
+      (legacyResult.data ?? []) as EmailFolderCountRow[],
+    );
+  });
+
 // ---------- Email Accounts ----------
 export const listEmailAccounts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -451,15 +584,22 @@ export const deleteEmailAccount = createServerFn({ method: "POST" })
 // ---------- Gmail Sync ----------
 type GmailHeader = { name: string; value: string };
 type GmailPayload = {
+  partId?: string;
+  filename?: string;
   headers?: GmailHeader[];
   mimeType?: string;
-  body?: { data?: string };
+  body?: { attachmentId?: string; data?: string; size?: number };
   parts?: GmailPayload[];
 };
 
+function toStandardBase64(s: string): string {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  return b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+}
+
 function decodeBase64Url(s: string): string {
   try {
-    const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+    const b64 = toStandardBase64(s);
     if (typeof Buffer !== "undefined")
       return Buffer.from(b64, "base64").toString("utf-8");
     return atob(b64);
@@ -493,6 +633,95 @@ function getHeader(headers: GmailHeader[] | undefined, name: string): string {
   );
 }
 
+type GmailAttachmentSummary = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+};
+
+type GmailAttachmentPart = GmailAttachmentSummary & {
+  gmailAttachmentId?: string;
+  data?: string;
+};
+
+function collectGmailAttachments(
+  payload: GmailPayload | undefined,
+): GmailAttachmentPart[] {
+  const attachments: GmailAttachmentPart[] = [];
+
+  const walk = (part: GmailPayload | undefined, path: string) => {
+    if (!part) return;
+    const filename = part.filename?.trim() ?? "";
+    const disposition = getHeader(part.headers, "Content-Disposition");
+    const body = part.body;
+    const hasAttachmentContent = Boolean(body?.attachmentId || body?.data);
+    const looksLikeAttachment =
+      hasAttachmentContent &&
+      Boolean(filename || disposition.toLowerCase().includes("attachment"));
+
+    if (looksLikeAttachment) {
+      const attachmentId = body?.attachmentId;
+      attachments.push({
+        id: attachmentId
+          ? `gmail:${attachmentId}`
+          : `part:${part.partId ?? path}`,
+        gmailAttachmentId: attachmentId,
+        data: body?.data,
+        filename:
+          filename ||
+          `attachment-${attachments.length + 1}.${(part.mimeType ?? "file")
+            .split("/")
+            .pop()}`,
+        mimeType: part.mimeType ?? "application/octet-stream",
+        size: body?.size ?? 0,
+      });
+    }
+
+    part.parts?.forEach((child, index) => walk(child, `${path}.${index}`));
+  };
+
+  walk(payload, "0");
+  return attachments;
+}
+
+function getGmailStatusFields(labelIds: string[], payload?: GmailPayload) {
+  const hasLabel = (label: string) => labelIds.includes(label);
+  const isSent = hasLabel("SENT");
+  const isDraft = hasLabel("DRAFT");
+  const isSpam = hasLabel("SPAM");
+  const isTrashed = hasLabel("TRASH");
+
+  return {
+    is_read: !hasLabel("UNREAD"),
+    is_starred: hasLabel("STARRED"),
+    is_archived:
+      !hasLabel("INBOX") && !isSent && !isDraft && !isSpam && !isTrashed,
+    is_sent: isSent,
+    is_draft: isDraft,
+    is_spam: isSpam,
+    is_trashed: isTrashed,
+    has_attachments: collectGmailAttachments(payload).length > 0,
+  };
+}
+
+function updateLocalLabels(
+  labels: unknown,
+  addLabelIds: string[] = [],
+  removeLabelIds: string[] = [],
+) {
+  const nextLabels = new Set(
+    Array.isArray(labels)
+      ? labels.filter((label): label is string => typeof label === "string")
+      : [],
+  );
+
+  for (const label of removeLabelIds) nextLabels.delete(label);
+  for (const label of addLabelIds) nextLabels.add(label);
+
+  return Array.from(nextLabels);
+}
+
 function parseFrom(raw: string): { email: string; name: string } {
   const m = raw.match(/^(.*?)<(.+?)>\s*$/);
   if (m) return { name: m[1].trim().replace(/^"|"$/g, ""), email: m[2].trim() };
@@ -501,36 +730,141 @@ function parseFrom(raw: string): { email: string; name: string } {
 
 type StoredGmailConnection = {
   accessToken?: string;
+  refreshToken?: string | null;
+  expiresAt?: number | null;
 };
 
-function getGmailAccessToken(connectionApiKey: string): string {
+type EmailAccountRow = Database["public"]["Tables"]["email_accounts"]["Row"];
+
+function parseGmailConnection(connectionApiKey: string): StoredGmailConnection {
   try {
     const parsed = JSON.parse(connectionApiKey) as StoredGmailConnection;
-    if (parsed.accessToken) return parsed.accessToken;
+    if (parsed.accessToken) return parsed;
   } catch {
     // Older saved rows may contain a raw token string.
   }
 
-  return connectionApiKey;
+  return { accessToken: connectionApiKey };
+}
+
+function isGmailAccessTokenFresh(connection: StoredGmailConnection) {
+  if (!connection.accessToken) return false;
+  if (!connection.expiresAt) return true;
+  return connection.expiresAt * 1000 > Date.now() + 60_000;
+}
+
+async function getGmailAccessToken({
+  context,
+  account,
+  forceRefresh = false,
+}: {
+  context: AuthenticatedFunctionContext;
+  account: EmailAccountRow;
+  forceRefresh?: boolean;
+}) {
+  const connection = parseGmailConnection(account.connection_api_key);
+  if (!forceRefresh && isGmailAccessTokenFresh(connection)) {
+    return connection.accessToken!;
+  }
+
+  if (!connection.refreshToken) {
+    throw new Error(
+      "Gmail authorization expired. Reconnect Gmail once in Settings to enable automatic sync.",
+    );
+  }
+
+  const clientId = process.env.GOOGLE_APP_USER_CONNECTOR_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_APP_USER_CONNECTOR_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Gmail automatic token refresh is not configured on the server.",
+    );
+  }
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: connection.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  const tokenPayload = (await tokenResponse.json()) as {
+    access_token?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+
+  if (!tokenResponse.ok || !tokenPayload.access_token) {
+    if (tokenPayload.error === "invalid_grant") {
+      throw new Error(
+        "Gmail authorization expired. Reconnect Gmail once in Settings to enable automatic sync.",
+      );
+    }
+    throw new Error(
+      `Gmail token refresh failed: ${
+        tokenPayload.error_description ??
+        tokenPayload.error ??
+        tokenResponse.status
+      }`,
+    );
+  }
+
+  const refreshedConnection: StoredGmailConnection = {
+    accessToken: tokenPayload.access_token,
+    refreshToken: tokenPayload.refresh_token ?? connection.refreshToken,
+    expiresAt:
+      Math.floor(Date.now() / 1000) + (tokenPayload.expires_in ?? 3600),
+  };
+  const connectionApiKey = JSON.stringify(refreshedConnection);
+  const { error: updateError } = await context.supabase
+    .from("email_accounts")
+    .update({ connection_api_key: connectionApiKey })
+    .eq("id", account.id);
+  if (updateError) {
+    throw toSupabaseError(updateError, "public.email_accounts");
+  }
+
+  account.connection_api_key = connectionApiKey;
+  return tokenPayload.access_token;
 }
 
 async function callGmailApi({
-  connectionApiKey,
+  context,
+  account,
   path,
   init,
 }: {
-  connectionApiKey: string;
+  context: AuthenticatedFunctionContext;
+  account: EmailAccountRow;
   path: string;
   init?: RequestInit;
 }): Promise<Response> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const headers = new Headers(init?.headers);
-  headers.set(
-    "Authorization",
-    `Bearer ${getGmailAccessToken(connectionApiKey)}`,
-  );
+  const makeRequest = async (accessToken: string) => {
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${accessToken}`);
+    return fetch(`${GMAIL_API_BASE_URL}${normalizedPath}`, {
+      ...init,
+      headers,
+    });
+  };
 
-  return fetch(`${GMAIL_API_BASE_URL}${normalizedPath}`, { ...init, headers });
+  let accessToken = await getGmailAccessToken({ context, account });
+  let response = await makeRequest(accessToken);
+  if (response.status === 401) {
+    accessToken = await getGmailAccessToken({
+      context,
+      account,
+      forceRefresh: true,
+    });
+    response = await makeRequest(accessToken);
+  }
+  return response;
 }
 
 async function throwGmailError(action: string, res: Response): Promise<never> {
@@ -578,7 +912,8 @@ async function modifyGmailLabels({
   if (!email.gmail_message_id) return { email, account };
 
   const res = await callGmailApi({
-    connectionApiKey: account.connection_api_key,
+    context,
+    account,
     path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/modify`,
     init: {
       method: "POST",
@@ -621,29 +956,20 @@ export const syncGmail = createServerFn({ method: "POST" })
     }
 
     const listRes = await callGmailApi({
-      connectionApiKey: account.connection_api_key,
-      path: `/gmail/v1/users/me/messages?maxResults=${data.maxResults ?? 25}&q=in:inbox`,
+      context,
+      account,
+      path: `/gmail/v1/users/me/messages?maxResults=${data.maxResults ?? 100}&includeSpamTrash=true`,
     });
     if (!listRes.ok) await throwGmailError("list", listRes);
     const listJson = (await listRes.json()) as { messages?: { id: string }[] };
     const messageIds = (listJson.messages ?? []).map((m) => m.id);
 
     let imported = 0;
+    let updated = 0;
     for (const mid of messageIds) {
-      // skip if exists
-      const { data: existing, error: existingError } = await context.supabase
-        .from("emails")
-        .select("id")
-        .eq("account_id", account.id)
-        .eq("gmail_message_id", mid)
-        .maybeSingle();
-      if (existingError) {
-        throw toSupabaseError(existingError, "public.emails");
-      }
-      if (existing) continue;
-
       const msgRes = await callGmailApi({
-        connectionApiKey: account.connection_api_key,
+        context,
+        account,
         path: `/gmail/v1/users/me/messages/${mid}?format=full`,
       });
       if (!msgRes.ok) continue;
@@ -671,11 +997,9 @@ export const syncGmail = createServerFn({ method: "POST" })
         ? new Date(Number(msg.internalDate)).toISOString()
         : new Date().toISOString();
       const labelIds = msg.labelIds ?? [];
+      const statusFields = getGmailStatusFields(labelIds, msg.payload);
 
-      const legacyEmailRow = {
-        user_id: context.userId,
-        account_id: account.id,
-        gmail_message_id: msg.id,
+      const legacyEmailFields = {
         gmail_thread_id: msg.threadId,
         from_email: from.email,
         from_name: from.name,
@@ -686,25 +1010,63 @@ export const syncGmail = createServerFn({ method: "POST" })
         body_html: html,
         body_text: text,
         received_at: receivedAt,
-        is_read: !labelIds.includes("UNREAD"),
+        is_read: statusFields.is_read,
         labels: labelIds,
       };
 
+      const enhancedEmailFields = supportsEnhancedEmailSchema
+        ? {
+            ...legacyEmailFields,
+            sent_at: statusFields.is_sent ? receivedAt : null,
+            is_starred: statusFields.is_starred,
+            is_archived: statusFields.is_archived,
+            is_sent: statusFields.is_sent,
+            is_draft: statusFields.is_draft,
+            is_spam: statusFields.is_spam,
+            is_trashed: statusFields.is_trashed,
+            has_attachments: statusFields.has_attachments,
+          }
+        : legacyEmailFields;
+
+      const { data: existing, error: existingError } = await context.supabase
+        .from("emails")
+        .select("id")
+        .eq("account_id", account.id)
+        .eq("gmail_message_id", mid)
+        .maybeSingle();
+      if (existingError) {
+        throw toSupabaseError(existingError, "public.emails");
+      }
+
+      if (existing) {
+        const { error: updateError } = await context.supabase
+          .from("emails")
+          .update(enhancedEmailFields)
+          .eq("id", existing.id);
+        if (updateError) {
+          throw toSupabaseError(updateError, "public.emails");
+        }
+        updated++;
+        continue;
+      }
+
+      const legacyEmailRow = {
+        user_id: context.userId,
+        account_id: account.id,
+        gmail_message_id: msg.id,
+        ...legacyEmailFields,
+      };
       const emailRow = supportsEnhancedEmailSchema
         ? {
             ...legacyEmailRow,
-            is_starred: labelIds.includes("STARRED"),
-            is_archived:
-              !labelIds.includes("INBOX") && !labelIds.includes("SENT"),
-            is_sent: labelIds.includes("SENT"),
-            is_draft: labelIds.includes("DRAFT"),
-            is_spam: labelIds.includes("SPAM"),
-            is_trashed: labelIds.includes("TRASH"),
-            has_attachments: Boolean(
-              msg.payload?.parts?.some(
-                (part) => part.body && "attachmentId" in part.body,
-              ),
-            ),
+            sent_at: statusFields.is_sent ? receivedAt : null,
+            is_starred: statusFields.is_starred,
+            is_archived: statusFields.is_archived,
+            is_sent: statusFields.is_sent,
+            is_draft: statusFields.is_draft,
+            is_spam: statusFields.is_spam,
+            is_trashed: statusFields.is_trashed,
+            has_attachments: statusFields.has_attachments,
           }
         : legacyEmailRow;
       const { error: insertError } = await context.supabase
@@ -730,13 +1092,94 @@ export const syncGmail = createServerFn({ method: "POST" })
         entity_type: "email_account",
         entity_id: account.id,
         action: "sync",
-        metadata: { imported },
+        metadata: { imported, updated, scanned: messageIds.length },
       });
-    if (activityErr && isMissingSupabaseSchemaError(activityErr)) {
+    if (activityErr && !isMissingSupabaseSchemaError(activityErr)) {
       throw toSupabaseError(activityErr, "public.activity_logs");
     }
 
-    return { imported, scanned: messageIds.length, syncedAt };
+    return { imported, updated, scanned: messageIds.length, syncedAt };
+  });
+
+export const listEmailAttachments = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ emailId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    const { email, account } = await getEmailAndAccount(context, data.emailId);
+    if (!email.gmail_message_id) return [];
+
+    const res = await callGmailApi({
+      context,
+      account,
+      path: `/gmail/v1/users/me/messages/${email.gmail_message_id}?format=full`,
+    });
+    if (!res.ok) await throwGmailError("attachment list", res);
+
+    const msg = (await res.json()) as { payload?: GmailPayload };
+    return collectGmailAttachments(msg.payload).map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+    }));
+  });
+
+export const getEmailAttachment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        emailId: z.string().uuid(),
+        attachmentId: z.string().min(1),
+      })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    const { email, account } = await getEmailAndAccount(context, data.emailId);
+    if (!email.gmail_message_id) throw new Error("Email has no Gmail message.");
+
+    const msgRes = await callGmailApi({
+      context,
+      account,
+      path: `/gmail/v1/users/me/messages/${email.gmail_message_id}?format=full`,
+    });
+    if (!msgRes.ok) await throwGmailError("attachment lookup", msgRes);
+
+    const msg = (await msgRes.json()) as { payload?: GmailPayload };
+    const attachment = collectGmailAttachments(msg.payload).find(
+      (candidate) => candidate.id === data.attachmentId,
+    );
+    if (!attachment) throw new Error("Attachment not found.");
+
+    let encodedData = attachment.data;
+    let size = attachment.size;
+    if (attachment.gmailAttachmentId) {
+      const attachmentRes = await callGmailApi({
+        context,
+        account,
+        path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/attachments/${attachment.gmailAttachmentId}`,
+      });
+      if (!attachmentRes.ok)
+        await throwGmailError("attachment download", attachmentRes);
+      const body = (await attachmentRes.json()) as {
+        data?: string;
+        size?: number;
+      };
+      encodedData = body.data;
+      size = body.size ?? size;
+    }
+
+    if (!encodedData) throw new Error("Attachment content is not available.");
+
+    return {
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      size,
+      data: toStandardBase64(encodedData),
+    };
   });
 
 export const sendGmailReply = createServerFn({ method: "POST" })
@@ -783,7 +1226,8 @@ export const sendGmailReply = createServerFn({ method: "POST" })
     if (data.threadId) body.threadId = data.threadId;
 
     const res = await callGmailApi({
-      connectionApiKey: account.connection_api_key,
+      context,
+      account,
       path: "/gmail/v1/users/me/messages/send",
       init: {
         method: "POST",
@@ -815,7 +1259,13 @@ export const sendGmailReply = createServerFn({ method: "POST" })
         received_at: new Date().toISOString(),
         sent_at: new Date().toISOString(),
         is_read: true,
+        is_starred: false,
+        is_archived: false,
         is_sent: true,
+        is_draft: false,
+        is_spam: false,
+        is_trashed: false,
+        has_attachments: false,
         labels: sent.labelIds ?? ["SENT"],
       })
       .select("id")
@@ -866,11 +1316,24 @@ export const listEmails = createServerFn({ method: "GET" })
         `subject.ilike.%${data.search}%,from_email.ilike.%${data.search}%,from_name.ilike.%${data.search}%`,
       );
     if (data.status === "unread") q = q.eq("is_read", false);
-    if (data.status === "read") q = q.eq("is_read", true).eq("is_sent", false);
+    if (data.status === "read") {
+      q = q
+        .eq("is_read", true)
+        .eq("is_spam", false)
+        .eq("is_trashed", false)
+        .eq("is_draft", false);
+    }
     if (data.status === "starred") q = q.eq("is_starred", true);
     if (data.status === "sent") q = q.eq("is_sent", true);
     if (data.status === "drafts") q = q.eq("is_draft", true);
-    if (data.status === "archived") q = q.eq("is_archived", true);
+    if (data.status === "archived") {
+      q = q
+        .eq("is_archived", true)
+        .eq("is_sent", false)
+        .eq("is_draft", false)
+        .eq("is_spam", false)
+        .eq("is_trashed", false);
+    }
     if (data.status === "spam") q = q.eq("is_spam", true);
     if (data.status === "trash") q = q.eq("is_trashed", true);
     if (data.fromDate) q = q.gte("received_at", data.fromDate);
@@ -885,16 +1348,24 @@ export const markEmailRead = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), isRead: z.boolean() }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    await modifyGmailLabels({
+    const { email } = await modifyGmailLabels({
       context,
       emailId: data.id,
       addLabelIds: data.isRead ? [] : ["UNREAD"],
       removeLabelIds: data.isRead ? ["UNREAD"] : [],
     });
-    await context.supabase
+    const { error } = await context.supabase
       .from("emails")
-      .update({ is_read: data.isRead })
+      .update({
+        is_read: data.isRead,
+        labels: updateLocalLabels(
+          email.labels,
+          data.isRead ? [] : ["UNREAD"],
+          data.isRead ? ["UNREAD"] : [],
+        ),
+      })
       .eq("id", data.id);
+    if (error) throw toSupabaseError(error, "public.emails");
     await context.supabase.from("activity_logs").insert({
       actor_id: context.userId,
       entity_type: "email",
@@ -910,16 +1381,24 @@ export const starEmail = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), isStarred: z.boolean() }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    await modifyGmailLabels({
+    const { email } = await modifyGmailLabels({
       context,
       emailId: data.id,
       addLabelIds: data.isStarred ? ["STARRED"] : [],
       removeLabelIds: data.isStarred ? [] : ["STARRED"],
     });
-    await context.supabase
+    const { error } = await context.supabase
       .from("emails")
-      .update({ is_starred: data.isStarred })
+      .update({
+        is_starred: data.isStarred,
+        labels: updateLocalLabels(
+          email.labels,
+          data.isStarred ? ["STARRED"] : [],
+          data.isStarred ? [] : ["STARRED"],
+        ),
+      })
       .eq("id", data.id);
+    if (error) throw toSupabaseError(error, "public.emails");
     return { ok: true };
   });
 
@@ -929,15 +1408,21 @@ export const archiveEmail = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid() }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    await modifyGmailLabels({
+    const { email } = await modifyGmailLabels({
       context,
       emailId: data.id,
       removeLabelIds: ["INBOX"],
     });
-    await context.supabase
+    const { error } = await context.supabase
       .from("emails")
-      .update({ is_archived: true, is_trashed: false, is_spam: false })
+      .update({
+        is_archived: true,
+        is_trashed: false,
+        is_spam: false,
+        labels: updateLocalLabels(email.labels, [], ["INBOX", "TRASH", "SPAM"]),
+      })
       .eq("id", data.id);
+    if (error) throw toSupabaseError(error, "public.emails");
     return { ok: true };
   });
 
@@ -949,15 +1434,22 @@ export const trashEmail = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const { email, account } = await getEmailAndAccount(context, data.id);
     const res = await callGmailApi({
-      connectionApiKey: account.connection_api_key,
+      context,
+      account,
       path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/trash`,
       init: { method: "POST" },
     });
     if (!res.ok) await throwGmailError("trash", res);
-    await context.supabase
+    const { error } = await context.supabase
       .from("emails")
-      .update({ is_trashed: true, is_archived: false })
+      .update({
+        is_trashed: true,
+        is_archived: false,
+        is_spam: false,
+        labels: updateLocalLabels(email.labels, ["TRASH"], ["INBOX"]),
+      })
       .eq("id", data.id);
+    if (error) throw toSupabaseError(error, "public.emails");
     return { ok: true };
   });
 
@@ -981,63 +1473,96 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     for (const id of data.ids) {
       if (data.action === "mark_read") {
-        await modifyGmailLabels({
+        const { email } = await modifyGmailLabels({
           context,
           emailId: id,
           removeLabelIds: ["UNREAD"],
         });
-        await context.supabase
+        const { error } = await context.supabase
           .from("emails")
-          .update({ is_read: true })
+          .update({
+            is_read: true,
+            labels: updateLocalLabels(email.labels, [], ["UNREAD"]),
+          })
           .eq("id", id);
+        if (error) throw toSupabaseError(error, "public.emails");
       }
       if (data.action === "mark_unread") {
-        await modifyGmailLabels({
+        const { email } = await modifyGmailLabels({
           context,
           emailId: id,
           addLabelIds: ["UNREAD"],
         });
-        await context.supabase
+        const { error } = await context.supabase
           .from("emails")
-          .update({ is_read: false })
+          .update({
+            is_read: false,
+            labels: updateLocalLabels(email.labels, ["UNREAD"]),
+          })
           .eq("id", id);
+        if (error) throw toSupabaseError(error, "public.emails");
       }
       if (data.action === "archive") {
-        await modifyGmailLabels({
+        const { email } = await modifyGmailLabels({
           context,
           emailId: id,
           removeLabelIds: ["INBOX"],
         });
-        await context.supabase
+        const { error } = await context.supabase
           .from("emails")
-          .update({ is_archived: true })
+          .update({
+            is_archived: true,
+            is_trashed: false,
+            is_spam: false,
+            labels: updateLocalLabels(email.labels, [], [
+              "INBOX",
+              "TRASH",
+              "SPAM",
+            ]),
+          })
           .eq("id", id);
+        if (error) throw toSupabaseError(error, "public.emails");
       }
       if (data.action === "star" || data.action === "unstar") {
         const isStarred = data.action === "star";
-        await modifyGmailLabels({
+        const { email } = await modifyGmailLabels({
           context,
           emailId: id,
           addLabelIds: isStarred ? ["STARRED"] : [],
           removeLabelIds: isStarred ? [] : ["STARRED"],
         });
-        await context.supabase
+        const { error } = await context.supabase
           .from("emails")
-          .update({ is_starred: isStarred })
+          .update({
+            is_starred: isStarred,
+            labels: updateLocalLabels(
+              email.labels,
+              isStarred ? ["STARRED"] : [],
+              isStarred ? [] : ["STARRED"],
+            ),
+          })
           .eq("id", id);
+        if (error) throw toSupabaseError(error, "public.emails");
       }
       if (data.action === "trash") {
         const { email, account } = await getEmailAndAccount(context, id);
         const res = await callGmailApi({
-          connectionApiKey: account.connection_api_key,
+          context,
+          account,
           path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/trash`,
           init: { method: "POST" },
         });
         if (!res.ok) await throwGmailError("trash", res);
-        await context.supabase
+        const { error } = await context.supabase
           .from("emails")
-          .update({ is_trashed: true })
+          .update({
+            is_trashed: true,
+            is_archived: false,
+            is_spam: false,
+            labels: updateLocalLabels(email.labels, ["TRASH"], ["INBOX"]),
+          })
           .eq("id", id);
+        if (error) throw toSupabaseError(error, "public.emails");
       }
     }
     return { ok: true, count: data.ids.length };
@@ -1893,6 +2418,37 @@ export const deleteCampaign = createServerFn({ method: "POST" })
   });
 
 // ---------- Reports / Team ----------
+const reportDrilldownKindSchema = z.enum([
+  "emails",
+  "unreadEmails",
+  "leads",
+  "customers",
+  "reminders",
+  "tasks",
+  "campaigns",
+  "campaignSent",
+  "campaignReplies",
+  "contacts",
+  "templates",
+]);
+
+function formatReportDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return "-";
+  return time.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function formatReportValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value).replace(/_/g, " ");
+}
+
 export const getReportsData = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -1904,6 +2460,7 @@ export const getReportsData = createServerFn({ method: "GET" })
       contactsResult,
       tasksResult,
       campaignsResult,
+      templatesResult,
     ] = await Promise.all([
       getEmailAnalyticsRows(context.supabase),
       context.supabase.from("leads").select("id, status, source, created_at"),
@@ -1914,6 +2471,9 @@ export const getReportsData = createServerFn({ method: "GET" })
       context.supabase
         .from("campaigns")
         .select("id, status, sent_count, reply_count, failed_count"),
+      context.supabase
+        .from("email_templates")
+        .select("id, category, visibility, created_at"),
     ]);
 
     if (leadsResult.error) {
@@ -1940,6 +2500,9 @@ export const getReportsData = createServerFn({ method: "GET" })
     ) {
       throw toSupabaseError(campaignsResult.error, "public.campaigns");
     }
+    if (templatesResult.error) {
+      throw toSupabaseError(templatesResult.error, "public.email_templates");
+    }
 
     const leadsData = leadsResult.data ?? [];
     const customersData = customersResult.data ?? [];
@@ -1953,6 +2516,7 @@ export const getReportsData = createServerFn({ method: "GET" })
     const campaignsData = isMissingSupabaseSchemaError(campaignsResult.error)
       ? []
       : (campaignsResult.data ?? []);
+    const templatesData = templatesResult.data ?? [];
 
     return {
       totals: {
@@ -1963,6 +2527,8 @@ export const getReportsData = createServerFn({ method: "GET" })
         reminders: remindersData.length,
         tasks: tasksData.length,
         campaigns: campaignsData.length,
+        contacts: contactsData.length,
+        templates: templatesData.length,
       },
       emailsByDay: groupEmailsByDay(emailsData),
       leadsByStatus: countRowsByField(leadsData, "status"),
@@ -1979,6 +2545,249 @@ export const getReportsData = createServerFn({ method: "GET" })
         },
         { sent: 0, replies: 0, failed: 0 },
       ),
+    };
+  });
+
+export const getReportDrilldown = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        kind: reportDrilldownKindSchema,
+      })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    if (data.kind === "emails" || data.kind === "unreadEmails") {
+      let q = context.supabase
+        .from("emails")
+        .select(
+          "id, subject, from_email, from_name, received_at, is_read, is_sent, has_attachments",
+        )
+        .order("received_at", { ascending: false })
+        .limit(200);
+      if (data.kind === "unreadEmails") q = q.eq("is_read", false);
+      const { data: rows, error } = await q;
+      if (error) throw toSupabaseError(error, "public.emails");
+      return {
+        title: data.kind === "unreadEmails" ? "Unread emails" : "Emails",
+        columns: ["Subject", "From", "Received", "Read", "Sent", "Files"],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: "/inbox",
+          values: [
+            formatReportValue(row.subject || "(no subject)"),
+            formatReportValue(row.from_name || row.from_email),
+            formatReportDate(row.received_at),
+            formatReportValue(row.is_read),
+            formatReportValue(row.is_sent),
+            formatReportValue(row.has_attachments),
+          ],
+        })),
+      };
+    }
+
+    if (data.kind === "leads") {
+      const { data: rows, error } = await context.supabase
+        .from("leads")
+        .select("id, name, email, company, status, source, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.leads");
+      return {
+        title: "Leads",
+        columns: ["Name", "Email", "Company", "Status", "Source", "Created"],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: `/leads/${row.id}`,
+          values: [
+            formatReportValue(row.name || row.email),
+            formatReportValue(row.email),
+            formatReportValue(row.company),
+            formatReportValue(row.status),
+            formatReportValue(row.source),
+            formatReportDate(row.created_at),
+          ],
+        })),
+      };
+    }
+
+    if (data.kind === "customers") {
+      const { data: rows, error } = await context.supabase
+        .from("customers")
+        .select("id, name, email, company, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.customers");
+      return {
+        title: "Customers",
+        columns: ["Name", "Email", "Company", "Status", "Created"],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: `/customers/${row.id}`,
+          values: [
+            formatReportValue(row.name || row.email),
+            formatReportValue(row.email),
+            formatReportValue(row.company),
+            formatReportValue(row.status),
+            formatReportDate(row.created_at),
+          ],
+        })),
+      };
+    }
+
+    if (data.kind === "reminders") {
+      const { data: rows, error } = await context.supabase
+        .from("reminders")
+        .select("id, title, type, priority, due_at, completed_at")
+        .order("due_at", { ascending: true })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.reminders");
+      return {
+        title: "Reminders",
+        columns: ["Title", "Type", "Priority", "Due", "Completed"],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: "/reminders",
+          values: [
+            formatReportValue(row.title),
+            formatReportValue(row.type),
+            formatReportValue(row.priority),
+            formatReportDate(row.due_at),
+            formatReportDate(row.completed_at),
+          ],
+        })),
+      };
+    }
+
+    if (data.kind === "tasks") {
+      const { data: rows, error } = await context.supabase
+        .from("tasks")
+        .select("id, title, status, priority, due_at, created_at")
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.tasks");
+      return {
+        title: "Tasks",
+        columns: ["Title", "Status", "Priority", "Due", "Created"],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: "/tasks",
+          values: [
+            formatReportValue(row.title),
+            formatReportValue(row.status),
+            formatReportValue(row.priority),
+            formatReportDate(row.due_at),
+            formatReportDate(row.created_at),
+          ],
+        })),
+      };
+    }
+
+    if (
+      data.kind === "campaigns" ||
+      data.kind === "campaignSent" ||
+      data.kind === "campaignReplies"
+    ) {
+      const { data: rows, error } = await context.supabase
+        .from("campaigns")
+        .select(
+          "id, name, status, sent_count, delivered_count, reply_count, failed_count, scheduled_at, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.campaigns");
+      const filteredRows = (rows ?? []).filter((row) => {
+        if (data.kind === "campaignSent") return (row.sent_count ?? 0) > 0;
+        if (data.kind === "campaignReplies") return (row.reply_count ?? 0) > 0;
+        return true;
+      });
+      return {
+        title:
+          data.kind === "campaignSent"
+            ? "Campaign sent"
+            : data.kind === "campaignReplies"
+              ? "Campaign replies"
+              : "Campaigns",
+        columns: [
+          "Name",
+          "Status",
+          "Sent",
+          "Delivered",
+          "Replies",
+          "Failed",
+          "Scheduled",
+        ],
+        rows: filteredRows.map((row) => ({
+          id: row.id,
+          href: "/campaigns",
+          values: [
+            formatReportValue(row.name),
+            formatReportValue(row.status),
+            formatReportValue(row.sent_count),
+            formatReportValue(row.delivered_count),
+            formatReportValue(row.reply_count),
+            formatReportValue(row.failed_count),
+            formatReportDate(row.scheduled_at),
+          ],
+        })),
+      };
+    }
+
+    if (data.kind === "contacts") {
+      const { data: rows, error } = await context.supabase
+        .from("contacts")
+        .select(
+          "id, full_name, email, company, source, last_contact_at, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw toSupabaseError(error, "public.contacts");
+      return {
+        title: "Contacts",
+        columns: [
+          "Name",
+          "Email",
+          "Company",
+          "Source",
+          "Last contact",
+          "Created",
+        ],
+        rows: (rows ?? []).map((row) => ({
+          id: row.id,
+          href: "/contacts",
+          values: [
+            formatReportValue(row.full_name || row.email),
+            formatReportValue(row.email),
+            formatReportValue(row.company),
+            formatReportValue(row.source),
+            formatReportDate(row.last_contact_at),
+            formatReportDate(row.created_at),
+          ],
+        })),
+      };
+    }
+
+    const { data: rows, error } = await context.supabase
+      .from("email_templates")
+      .select("id, name, subject, category, visibility, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(200);
+    if (error) throw toSupabaseError(error, "public.email_templates");
+    return {
+      title: "Templates",
+      columns: ["Name", "Subject", "Category", "Visibility", "Updated"],
+      rows: (rows ?? []).map((row) => ({
+        id: row.id,
+        href: "/templates",
+        values: [
+          formatReportValue(row.name),
+          formatReportValue(row.subject),
+          formatReportValue(row.category),
+          formatReportValue(row.visibility),
+          formatReportDate(row.updated_at),
+        ],
+      })),
     };
   });
 

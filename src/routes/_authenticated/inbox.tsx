@@ -15,7 +15,11 @@ import {
   archiveEmail,
   trashEmail,
   bulkUpdateEmails,
+  listEmailAttachments,
+  getEmailAttachment,
 } from "@/lib/crm.functions";
+import type { EmailFolderCounts } from "@/lib/crm.functions";
+import { useEmailFolderCounts } from "@/hooks/use-email-folder-counts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -63,6 +67,11 @@ import {
   Clock3,
   MailOpen,
   Reply,
+  Paperclip,
+  Download,
+  Eye,
+  Printer,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -80,6 +89,61 @@ const EMAIL_STATUSES = [
 ] as const;
 type EmailStatus = (typeof EMAIL_STATUSES)[number];
 
+const EMAIL_STATUS_META: Record<
+  EmailStatus,
+  {
+    label: string;
+    countKey: keyof EmailFolderCounts;
+    description: string;
+  }
+> = {
+  all: {
+    label: "All Mail",
+    countKey: "all",
+    description: "All synced Gmail messages, including Spam and Trash.",
+  },
+  unread: {
+    label: "Unread",
+    countKey: "unread",
+    description: "Messages with the Gmail UNREAD label.",
+  },
+  read: {
+    label: "Read",
+    countKey: "read",
+    description: "Read messages excluding Spam, Trash, and Drafts.",
+  },
+  starred: {
+    label: "Starred",
+    countKey: "starred",
+    description: "Messages with the Gmail STARRED label.",
+  },
+  sent: {
+    label: "Sent",
+    countKey: "sent",
+    description: "Messages with the Gmail SENT label.",
+  },
+  drafts: {
+    label: "Drafts",
+    countKey: "drafts",
+    description: "Messages with the Gmail DRAFT label.",
+  },
+  archived: {
+    label: "Archived",
+    countKey: "archived",
+    description: "Received mail without Inbox, Sent, Draft, Spam, or Trash.",
+  },
+  spam: {
+    label: "Spam",
+    countKey: "spam",
+    description: "Messages with the Gmail SPAM label.",
+  },
+  trash: {
+    label: "Trash",
+    countKey: "trash",
+    description: "Messages with the Gmail TRASH label.",
+  },
+};
+
 function isEmailStatus(value: unknown): value is EmailStatus {
   return (
     typeof value === "string" && EMAIL_STATUSES.includes(value as EmailStatus)
@@ -95,6 +159,155 @@ export const Route = createFileRoute("/_authenticated/inbox")({
 });
 
 type Email = Awaited<ReturnType<typeof listEmails>>[number];
+type EmailAttachment = Awaited<ReturnType<typeof listEmailAttachments>>[number];
+type AttachmentAction = "view" | "download" | "print";
+type BulkAction =
+  | "mark_read"
+  | "mark_unread"
+  | "archive"
+  | "trash"
+  | "star"
+  | "unstar";
+
+const EMAIL_COUNT_KEYS = [
+  "all",
+  "unread",
+  "read",
+  "starred",
+  "sent",
+  "drafts",
+  "archived",
+  "spam",
+  "trash",
+] as const satisfies readonly (keyof EmailFolderCounts)[];
+
+function getEmailLabels(email: Partial<Email>) {
+  const labels = "labels" in email ? email.labels : [];
+  if (!Array.isArray(labels)) return [];
+  return labels.filter((label): label is string => typeof label === "string");
+}
+
+function updateEmailLabels(
+  labels: unknown,
+  addLabelIds: string[] = [],
+  removeLabelIds: string[] = [],
+) {
+  const nextLabels = new Set(
+    Array.isArray(labels)
+      ? labels.filter((label): label is string => typeof label === "string")
+      : [],
+  );
+  for (const label of removeLabelIds) nextLabels.delete(label);
+  for (const label of addLabelIds) nextLabels.add(label);
+  return Array.from(nextLabels);
+}
+
+function getEmailContribution(email: Partial<Email>): EmailFolderCounts {
+  const labels = getEmailLabels(email).map((label) => label.toUpperCase());
+  const hasLabels = labels.length > 0;
+  const hasLabel = (label: string) => labels.includes(label);
+  const isRead = Boolean(email.is_read);
+  const isSent = Boolean(email.is_sent) || hasLabel("SENT");
+  const isDraft = Boolean(email.is_draft) || hasLabel("DRAFT");
+  const isSpam = Boolean(email.is_spam) || hasLabel("SPAM");
+  const isTrashed = Boolean(email.is_trashed) || hasLabel("TRASH");
+  const isArchived =
+    (Boolean(email.is_archived) ||
+      (hasLabels &&
+        !hasLabel("INBOX") &&
+        !hasLabel("SENT") &&
+        !hasLabel("DRAFT") &&
+        !hasLabel("SPAM") &&
+        !hasLabel("TRASH"))) &&
+    !isSent &&
+    !isDraft &&
+    !isSpam &&
+    !isTrashed;
+
+  return {
+    all: 1,
+    unread: isRead ? 0 : 1,
+    read: isRead && !isSpam && !isTrashed && !isDraft ? 1 : 0,
+    starred: Boolean(email.is_starred) || hasLabel("STARRED") ? 1 : 0,
+    sent: isSent ? 1 : 0,
+    drafts: isDraft ? 1 : 0,
+    archived: isArchived ? 1 : 0,
+    spam: isSpam ? 1 : 0,
+    trash: isTrashed ? 1 : 0,
+  };
+}
+
+function getEmailCountDelta(
+  before: Partial<Email>,
+  after: Partial<Email>,
+): Partial<EmailFolderCounts> {
+  const beforeCounts = getEmailContribution(before);
+  const afterCounts = getEmailContribution(after);
+
+  return EMAIL_COUNT_KEYS.reduce<Partial<EmailFolderCounts>>((delta, key) => {
+    const change = afterCounts[key] - beforeCounts[key];
+    if (change !== 0) delta[key] = change;
+    return delta;
+  }, {});
+}
+
+function applyEmailCountDelta(
+  counts: EmailFolderCounts,
+  delta: Partial<EmailFolderCounts>,
+) {
+  return EMAIL_COUNT_KEYS.reduce<EmailFolderCounts>(
+    (next, key) => ({
+      ...next,
+      [key]: Math.max(0, next[key] + (delta[key] ?? 0)),
+    }),
+    { ...counts },
+  );
+}
+
+function getBulkEmailPatch(email: Email, action: BulkAction): Partial<Email> {
+  if (action === "mark_read") {
+    return {
+      is_read: true,
+      labels: updateEmailLabels(email.labels, [], ["UNREAD"]),
+    };
+  }
+  if (action === "mark_unread") {
+    return {
+      is_read: false,
+      labels: updateEmailLabels(email.labels, ["UNREAD"]),
+    };
+  }
+  if (action === "archive") {
+    return {
+      is_archived: true,
+      is_spam: false,
+      is_trashed: false,
+      labels: updateEmailLabels(email.labels, [], ["INBOX", "SPAM", "TRASH"]),
+    };
+  }
+  if (action === "trash") {
+    return {
+      is_archived: false,
+      is_spam: false,
+      is_trashed: true,
+      labels: updateEmailLabels(email.labels, ["TRASH"], ["INBOX"]),
+    };
+  }
+  if (action === "star") {
+    return {
+      is_starred: true,
+      labels: updateEmailLabels(email.labels, ["STARRED"]),
+    };
+  }
+  return {
+    is_starred: false,
+    labels: updateEmailLabels(email.labels, [], ["STARRED"]),
+  };
+}
+
+function formatFolderCount(count: number) {
+  return new Intl.NumberFormat().format(count);
+}
 
 function InboxPage() {
   const qc = useQueryClient();
@@ -108,13 +321,26 @@ function InboxPage() {
   const mkArchive = useServerFn(archiveEmail);
   const mkTrash = useServerFn(trashEmail);
   const mkBulk = useServerFn(bulkUpdateEmails);
+  const listAttachments = useServerFn(listEmailAttachments);
+  const getAttachment = useServerFn(getEmailAttachment);
   const { status } = Route.useSearch();
   const showingUnread = status === "unread";
+  const {
+    counts: folderCounts,
+    isLoading: folderCountsLoading,
+    error: folderCountsError,
+    refreshCounts,
+    updateCountOptimistically,
+  } = useEmailFolderCounts();
 
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [selected, setSelected] = useState<Email | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [attachmentAction, setAttachmentAction] = useState<{
+    id: string;
+    action: AttachmentAction;
+  } | null>(null);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -124,6 +350,16 @@ function InboxPage() {
     queryKey: ["emails", search, from, status],
     queryFn: () =>
       listEm({ data: { search, status, fromDate: from || undefined } }),
+  });
+  const {
+    data: attachments = [],
+    isLoading: attachmentsLoading,
+    error: attachmentsError,
+  } = useQuery({
+    queryKey: ["email-attachments", selected?.id],
+    queryFn: () => listAttachments({ data: { emailId: selected!.id } }),
+    enabled: !!selected,
+    staleTime: 10 * 60 * 1000,
   });
 
   const unreadEmails = emails.filter((email) => !email.is_read);
@@ -135,17 +371,55 @@ function InboxPage() {
   const previousUnread =
     selectedIndex > 0 ? unreadEmails[selectedIndex - 1] : undefined;
 
+  const getVisibleEmail = (id: string) =>
+    selected?.id === id ? selected : emails.find((email) => email.id === id);
+
+  const restoreFolderCounts = (snapshot?: EmailFolderCounts) => {
+    if (snapshot) updateCountOptimistically(() => snapshot);
+  };
+
+  const applyOptimisticEmailPatch = (
+    email: Email,
+    patch: Partial<Email>,
+  ) => {
+    const after = { ...email, ...patch };
+    const delta = getEmailCountDelta(email, after);
+    return updateCountOptimistically((counts) =>
+      applyEmailCountDelta(counts, delta),
+    );
+  };
+
+  const applyOptimisticBulkAction = (action: BulkAction) => {
+    const emailsToUpdate = emails.filter((email) =>
+      selectedIds.includes(email.id),
+    );
+    if (emailsToUpdate.length === 0) return undefined;
+
+    return updateCountOptimistically((counts) =>
+      emailsToUpdate.reduce((nextCounts, email) => {
+        const after = { ...email, ...getBulkEmailPatch(email, action) };
+        return applyEmailCountDelta(
+          nextCounts,
+          getEmailCountDelta(email, after),
+        );
+      }, counts),
+    );
+  };
+
   const invalidateInbox = () => {
     qc.invalidateQueries({ queryKey: ["emails"] });
+    qc.invalidateQueries({ queryKey: ["email-folder-counts"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
   };
 
   const syncMut = useMutation({
     mutationFn: (accountId: string) =>
-      sync({ data: { accountId, maxResults: 25 } }),
+      sync({ data: { accountId, maxResults: 100 } }),
     onSuccess: (res) => {
-      toast.success(`Imported ${res.imported} new email(s)`);
+      toast.success(
+        `Synced ${res.scanned} email(s): ${res.imported} new, ${res.updated ?? 0} refreshed`,
+      );
       invalidateInbox();
       qc.invalidateQueries({ queryKey: ["accounts"] });
     },
@@ -189,73 +463,225 @@ function InboxPage() {
   const openEmail = async (e: Email) => {
     setSelected(e.is_read ? e : { ...e, is_read: true });
     if (!e.is_read) {
-      await mkRead({ data: { id: e.id, isRead: true } });
-      invalidateInbox();
+      const previousCounts = applyOptimisticEmailPatch(e, {
+        is_read: true,
+        labels: updateEmailLabels(e.labels, [], ["UNREAD"]),
+      });
+      try {
+        await mkRead({ data: { id: e.id, isRead: true } });
+        invalidateInbox();
+      } catch (error) {
+        restoreFolderCounts(previousCounts);
+        setSelected(e);
+        toast.error(
+          error instanceof Error ? error.message : "Could not mark email read.",
+        );
+      }
     }
   };
 
   const markRead = useMutation({
     mutationFn: ({ id, isRead }: { id: string; isRead: boolean }) =>
       mkRead({ data: { id, isRead } }),
-    onSuccess: (_, variables) => {
+    onMutate: (variables) => {
+      const email = getVisibleEmail(variables.id);
+      if (!email) return {};
+      const previousCounts = applyOptimisticEmailPatch(email, {
+        is_read: variables.isRead,
+        labels: updateEmailLabels(
+          email.labels,
+          variables.isRead ? [] : ["UNREAD"],
+          variables.isRead ? ["UNREAD"] : [],
+        ),
+      });
+      const previousSelected = selected;
       setSelected((email) =>
         email?.id === variables.id
           ? { ...email, is_read: variables.isRead }
           : email,
       );
-      invalidateInbox();
+      return { previousCounts, previousSelected };
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _variables, context) => {
+      restoreFolderCounts(context?.previousCounts);
+      if (context && "previousSelected" in context) {
+        setSelected(context.previousSelected ?? null);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidateInbox(),
   });
 
   const star = useMutation({
     mutationFn: ({ id, isStarred }: { id: string; isStarred: boolean }) =>
       mkStar({ data: { id, isStarred } }),
-    onSuccess: (_, variables) => {
+    onMutate: (variables) => {
+      const email = getVisibleEmail(variables.id);
+      if (!email) return {};
+      const previousCounts = applyOptimisticEmailPatch(email, {
+        is_starred: variables.isStarred,
+        labels: updateEmailLabels(
+          email.labels,
+          variables.isStarred ? ["STARRED"] : [],
+          variables.isStarred ? [] : ["STARRED"],
+        ),
+      });
+      const previousSelected = selected;
       setSelected((email) =>
         email?.id === variables.id
           ? { ...email, is_starred: variables.isStarred }
           : email,
       );
-      invalidateInbox();
+      return { previousCounts, previousSelected };
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _variables, context) => {
+      restoreFolderCounts(context?.previousCounts);
+      if (context && "previousSelected" in context) {
+        setSelected(context.previousSelected ?? null);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidateInbox(),
   });
 
   const archive = useMutation({
     mutationFn: (id: string) => mkArchive({ data: { id } }),
-    onSuccess: (_, id) => {
+    onMutate: (id) => {
+      const email = getVisibleEmail(id);
+      if (!email) return {};
+      const previousCounts = applyOptimisticEmailPatch(email, {
+        is_archived: true,
+        is_spam: false,
+        is_trashed: false,
+        labels: updateEmailLabels(email.labels, [], [
+          "INBOX",
+          "SPAM",
+          "TRASH",
+        ]),
+      });
+      const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
-      invalidateInbox();
+      return { previousCounts, previousSelected };
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _id, context) => {
+      restoreFolderCounts(context?.previousCounts);
+      if (context && "previousSelected" in context) {
+        setSelected(context.previousSelected ?? null);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidateInbox(),
   });
 
   const trash = useMutation({
     mutationFn: (id: string) => mkTrash({ data: { id } }),
-    onSuccess: (_, id) => {
+    onMutate: (id) => {
+      const email = getVisibleEmail(id);
+      if (!email) return {};
+      const previousCounts = applyOptimisticEmailPatch(email, {
+        is_archived: false,
+        is_spam: false,
+        is_trashed: true,
+        labels: updateEmailLabels(email.labels, ["TRASH"], ["INBOX"]),
+      });
+      const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
-      invalidateInbox();
+      return { previousCounts, previousSelected };
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _id, context) => {
+      restoreFolderCounts(context?.previousCounts);
+      if (context && "previousSelected" in context) {
+        setSelected(context.previousSelected ?? null);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidateInbox(),
   });
 
   const bulk = useMutation({
-    mutationFn: (
-      action:
-        | "mark_read"
-        | "mark_unread"
-        | "archive"
-        | "trash"
-        | "star"
-        | "unstar",
-    ) => mkBulk({ data: { ids: selectedIds, action } }),
+    mutationFn: (action: BulkAction) =>
+      mkBulk({ data: { ids: selectedIds, action } }),
+    onMutate: (action) => {
+      const previousCounts = applyOptimisticBulkAction(action);
+      const previousSelected = selected;
+      const selectedIdSet = new Set(selectedIds);
+      setSelected((email) => {
+        if (!email || !selectedIdSet.has(email.id)) return email;
+        if (action === "archive" || action === "trash") return null;
+        return { ...email, ...getBulkEmailPatch(email, action) };
+      });
+      return { previousCounts, previousSelected };
+    },
     onSuccess: () => {
       setSelectedIds([]);
-      invalidateInbox();
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _action, context) => {
+      restoreFolderCounts(context?.previousCounts);
+      if (context && "previousSelected" in context) {
+        setSelected(context.previousSelected ?? null);
+      }
+      toast.error(error.message);
+    },
+    onSettled: () => invalidateInbox(),
   });
+
+  const handleAttachmentAction = async (
+    attachment: EmailAttachment,
+    action: AttachmentAction,
+  ) => {
+    if (!selected) return;
+
+    let previewWindow: Window | null = null;
+    if (action === "view" || action === "print") {
+      previewWindow = window.open("", "_blank");
+      if (!previewWindow) {
+        toast.error("Allow pop-ups to view or print attachments.");
+        return;
+      }
+      previewWindow.document.write(
+        "<!doctype html><title>Loading attachment...</title><p>Loading attachment...</p>",
+      );
+    }
+
+    setAttachmentAction({ id: attachment.id, action });
+    try {
+      const file = await getAttachment({
+        data: { emailId: selected.id, attachmentId: attachment.id },
+      });
+      const blob = base64ToBlob(file.data, file.mimeType);
+      const url = URL.createObjectURL(blob);
+      const filename = file.filename || attachment.filename;
+
+      if (action === "download") {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        return;
+      }
+
+      if (action === "view") {
+        previewWindow!.location.href = url;
+        window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+        return;
+      }
+
+      previewWindow!.document.open();
+      previewWindow!.document.write(createPrintDocument(url, filename));
+      previewWindow!.document.close();
+      window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    } catch (error) {
+      previewWindow?.close();
+      toast.error(
+        error instanceof Error ? error.message : "Attachment action failed.",
+      );
+    } finally {
+      setAttachmentAction(null);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl p-5 lg:p-8">
@@ -290,21 +716,64 @@ function InboxPage() {
       </div>
 
       <Card className="mb-4 border-border/80 p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap gap-2">
-          {EMAIL_STATUSES.map((filter) => (
-            <Button
-              key={filter}
-              variant={status === filter ? "default" : "outline"}
-              size="sm"
-              asChild
-            >
-              <Link to="/inbox" search={{ status: filter }}>
-                {filter === "all"
-                  ? "All"
-                  : filter[0].toUpperCase() + filter.slice(1)}
-              </Link>
-            </Button>
-          ))}
+        <div className="mb-3 flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              {EMAIL_STATUSES.map((filter) => {
+                const meta = EMAIL_STATUS_META[filter];
+                const count = folderCounts[meta.countKey];
+                const isActive = status === filter;
+
+                return (
+                  <Button
+                    key={filter}
+                    variant={isActive ? "default" : "outline"}
+                    size="sm"
+                    asChild
+                  >
+                    <Link
+                      to="/inbox"
+                      search={{ status: filter }}
+                      title={`${meta.description} Current count: ${count}.`}
+                    >
+                      <span>{meta.label}</span>
+                      {folderCountsLoading ? (
+                        <span
+                          className={`ml-2 h-4 w-7 animate-pulse rounded-full ${
+                            isActive ? "bg-primary-foreground/30" : "bg-muted"
+                          }`}
+                        />
+                      ) : (
+                        <span
+                          className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            isActive
+                              ? "bg-primary-foreground/20 text-primary-foreground"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {formatFolderCount(count)}
+                        </span>
+                      )}
+                    </Link>
+                  </Button>
+                );
+              })}
+            </div>
+            {folderCountsError && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                onClick={() => refreshCounts()}
+              >
+                Retry counts
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Counts come from synced Gmail labels in Supabase. All Mail includes
+            Spam and Trash until Gmail permanently deletes them.
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[240px]">
@@ -850,6 +1319,13 @@ function InboxPage() {
                       </>
                     )}
                   </div>
+                  <EmailAttachments
+                    attachments={attachments}
+                    error={attachmentsError}
+                    isLoading={attachmentsLoading}
+                    pendingAction={attachmentAction}
+                    onAction={handleAttachmentAction}
+                  />
                   <article
                     className={`prose prose-sm dark:prose-invert max-w-none overflow-hidden rounded-xl border border-border/80 bg-card p-5 leading-relaxed shadow-sm sm:p-7 ${
                       selected.body_html ? "" : "whitespace-pre-wrap"
@@ -886,7 +1362,185 @@ function sanitizeHtml(html: string): string {
     .replace(/\son\w+='[^']*'/gi, "");
 }
 
+function EmailAttachments({
+  attachments,
+  error,
+  isLoading,
+  pendingAction,
+  onAction,
+}: {
+  attachments: EmailAttachment[];
+  error: unknown;
+  isLoading: boolean;
+  pendingAction: { id: string; action: AttachmentAction } | null;
+  onAction: (attachment: EmailAttachment, action: AttachmentAction) => void;
+}) {
+  if (isLoading) {
+    return (
+      <section className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading attachments...
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        {error instanceof Error
+          ? error.message
+          : "Could not load email attachments."}
+      </section>
+    );
+  }
+
+  if (attachments.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border border-border/80 bg-card p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <Paperclip className="h-4 w-4 text-primary" />
+        Attachments ({attachments.length})
+      </div>
+      <div className="space-y-2">
+        {attachments.map((attachment) => {
+          const isBusy = pendingAction?.id === attachment.id;
+          return (
+            <div
+              key={attachment.id}
+              className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <FileText className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {attachment.filename}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {attachment.mimeType} /{" "}
+                    {formatAttachmentSize(attachment.size)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!pendingAction}
+                  onClick={() => onAction(attachment, "view")}
+                >
+                  {isBusy && pendingAction?.action === "view" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="mr-2 h-4 w-4" />
+                  )}
+                  View
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!pendingAction}
+                  onClick={() => onAction(attachment, "download")}
+                >
+                  {isBusy && pendingAction?.action === "download" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  Download
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!pendingAction}
+                  onClick={() => onAction(attachment, "print")}
+                >
+                  {isBusy && pendingAction?.action === "print" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Printer className="mr-2 h-4 w-4" />
+                  )}
+                  Print
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function formatAttachmentSize(size: number) {
+  if (!size) return "Unknown size";
+  if (size < 1024) return `${size} B`;
+  const kb = size / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+}
+
+function base64ToBlob(base64: string, mimeType: string) {
+  const binary = window.atob(base64);
+  const chunks: BlobPart[] = [];
+  for (let offset = 0; offset < binary.length; offset += 1024) {
+    const slice = binary.slice(offset, offset + 1024);
+    const bytes = new Uint8Array(slice.length);
+    for (let index = 0; index < slice.length; index++) {
+      bytes[index] = slice.charCodeAt(index);
+    }
+    chunks.push(bytes);
+  }
+  return new Blob(chunks, {
+    type: mimeType || "application/octet-stream",
+  });
+}
+
+function createPrintDocument(url: string, filename: string) {
+  const safeUrl = escapeHtml(url);
+  const safeFilename = escapeHtml(filename);
+  return `<!doctype html>
+<html>
+  <head>
+    <title>${safeFilename}</title>
+    <style>
+      html, body, iframe { height: 100%; margin: 0; width: 100%; }
+      iframe { border: 0; }
+    </style>
+  </head>
+  <body>
+    <iframe title="${safeFilename}" src="${safeUrl}"></iframe>
+    <script>
+      const frame = document.querySelector("iframe");
+      frame.addEventListener("load", () => {
+        setTimeout(() => {
+          try {
+            frame.contentWindow.focus();
+            frame.contentWindow.print();
+          } catch {
+            window.print();
+          }
+        }, 250);
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function ReplyBox({ email, accountId }: { email: Email; accountId?: string }) {
+  const qc = useQueryClient();
   const send = useServerFn(sendGmailReply);
   const listTpl = useServerFn(listTemplates);
   const { data: templates = [] } = useQuery({
@@ -914,6 +1568,10 @@ function ReplyBox({ email, accountId }: { email: Email; accountId?: string }) {
     onSuccess: () => {
       toast.success("Reply sent");
       setBody("");
+      qc.invalidateQueries({ queryKey: ["emails"] });
+      qc.invalidateQueries({ queryKey: ["email-folder-counts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

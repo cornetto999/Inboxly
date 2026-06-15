@@ -1,20 +1,61 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
-import { getReportsData } from "@/lib/crm.functions";
+import { useState } from "react";
+import { getReportDrilldown, getReportsData } from "@/lib/crm.functions";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChartNoAxesCombined } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ArrowUpRight, ChartNoAxesCombined, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   head: () => ({ meta: [{ title: "Reports - Inboxly" }] }),
   component: ReportsPage,
 });
 
+type ReportKind =
+  | "emails"
+  | "unreadEmails"
+  | "leads"
+  | "customers"
+  | "reminders"
+  | "tasks"
+  | "campaigns"
+  | "campaignSent"
+  | "campaignReplies"
+  | "contacts"
+  | "templates";
+
 function ReportsPage() {
   const reportsFn = useServerFn(getReportsData);
+  const drilldownFn = useServerFn(getReportDrilldown);
+  const [selectedKind, setSelectedKind] = useState<ReportKind | null>(null);
   const { data } = useQuery({
     queryKey: ["reports"],
     queryFn: () => reportsFn(),
+  });
+  const {
+    data: drilldown,
+    isFetching: drilldownLoading,
+    error: drilldownError,
+  } = useQuery({
+    queryKey: ["report-drilldown", selectedKind],
+    queryFn: () => drilldownFn({ data: { kind: selectedKind! } }),
+    enabled: !!selectedKind,
   });
 
   const totals = data?.totals ?? {
@@ -25,7 +66,30 @@ function ReportsPage() {
     reminders: 0,
     tasks: 0,
     campaigns: 0,
+    contacts: 0,
+    templates: 0,
   };
+  const reportCards: { label: string; value: number; kind: ReportKind }[] = [
+    { label: "Emails", value: totals.emails, kind: "emails" },
+    { label: "Unread", value: totals.unreadEmails, kind: "unreadEmails" },
+    { label: "Leads", value: totals.leads, kind: "leads" },
+    { label: "Customers", value: totals.customers, kind: "customers" },
+    { label: "Reminders", value: totals.reminders, kind: "reminders" },
+    { label: "Tasks", value: totals.tasks, kind: "tasks" },
+    { label: "Campaigns", value: totals.campaigns, kind: "campaigns" },
+    { label: "Contacts", value: totals.contacts, kind: "contacts" },
+    { label: "Templates", value: totals.templates, kind: "templates" },
+    {
+      label: "Campaign sent",
+      value: data?.campaignTotals.sent ?? 0,
+      kind: "campaignSent",
+    },
+    {
+      label: "Campaign replies",
+      value: data?.campaignTotals.replies ?? 0,
+      kind: "campaignReplies",
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-7xl p-5 lg:p-8">
@@ -37,24 +101,31 @@ function ReportsPage() {
       </div>
 
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          ["Emails", totals.emails],
-          ["Unread", totals.unreadEmails],
-          ["Leads", totals.leads],
-          ["Customers", totals.customers],
-          ["Tasks", totals.tasks],
-          ["Campaigns", totals.campaigns],
-          ["Campaign sent", data?.campaignTotals.sent ?? 0],
-          ["Campaign replies", data?.campaignTotals.replies ?? 0],
-        ].map(([label, value]) => (
-          <Card key={label}>
+        {reportCards.map(({ label, value, kind }) => (
+          <Card
+            key={kind}
+            role="button"
+            tabIndex={0}
+            className="cursor-pointer outline-none transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setSelectedKind(kind)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSelectedKind(kind);
+              }
+            }}
+          >
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="flex items-center justify-between gap-2 text-sm font-medium text-muted-foreground">
                 {label}
+                <ArrowUpRight className="h-3.5 w-3.5" />
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold tabular-nums">{value}</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Click to view table
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -78,6 +149,76 @@ function ReportsPage() {
           values={data?.contactsBySource ?? {}}
         />
       </div>
+
+      <Dialog
+        open={!!selectedKind}
+        onOpenChange={(open) => !open && setSelectedKind(null)}
+      >
+        <DialogContent className="flex max-h-[88vh] max-w-6xl flex-col overflow-hidden p-0">
+          <DialogHeader className="border-b px-6 py-5 text-left">
+            <DialogTitle>{drilldown?.title ?? "Report details"}</DialogTitle>
+            <DialogDescription>
+              Latest matching records, updated automatically when CRM data
+              changes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 overflow-auto p-6">
+            {drilldownLoading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading table...
+              </div>
+            ) : drilldownError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                {drilldownError instanceof Error
+                  ? drilldownError.message
+                  : "Unable to load this report table."}
+              </div>
+            ) : !drilldown || drilldown.rows.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                No records found for this report.
+              </div>
+            ) : (
+              <div className="rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {drilldown.columns.map((column) => (
+                        <TableHead key={column}>{column}</TableHead>
+                      ))}
+                      <TableHead className="w-24 text-right">Open</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {drilldown.rows.map((row) => (
+                      <TableRow key={row.id}>
+                        {row.values.map((value, index) => (
+                          <TableCell
+                            key={`${row.id}-${drilldown.columns[index]}`}
+                            className={index === 0 ? "font-medium" : ""}
+                          >
+                            {value}
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right">
+                          {row.href ? (
+                            <Button size="sm" variant="ghost" asChild>
+                              <a href={row.href}>Open</a>
+                            </Button>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

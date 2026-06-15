@@ -90,6 +90,11 @@ function SettingsPage() {
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
         scopes: GMAIL_OAUTH_SCOPES,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+          include_granted_scopes: "true",
+        },
       },
     });
     if (error) throw toError(error, "Unable to start Google sign-in.");
@@ -175,13 +180,14 @@ function SettingsPage() {
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Sync your inbox using secure OAuth. No passwords are stored.
+                Syncs automatically every five minutes while Inboxly is open. No
+                passwords are stored.
               </p>
             </div>
           </div>
           <Button onClick={handleConnect} disabled={connecting}>
             {connecting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Connect Gmail
+            {accounts.length > 0 ? "Reconnect Gmail" : "Connect Gmail"}
           </Button>
         </div>
 

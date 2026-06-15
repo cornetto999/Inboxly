@@ -116,56 +116,6 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
       .then(({ data }) => setEmail(data.user?.email ?? ""));
   }, []);
 
-  useEffect(() => {
-    const channel = supabase
-      .channel("sidebar-counters")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "emails" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "leads" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "customers" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "reminders" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "tasks" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "campaigns" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "contacts" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "email_templates" },
-        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [qc]);
-
   const signOut = async () => {
     await qc.cancelQueries();
     qc.clear();
