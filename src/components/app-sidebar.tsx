@@ -58,7 +58,12 @@ const nav = [
     icon: Megaphone,
     counter: "campaigns",
   },
-  { title: "Contacts", url: "/contacts", icon: ContactRound },
+  {
+    title: "Contacts",
+    url: "/contacts",
+    icon: ContactRound,
+    counter: "contacts",
+  },
   { title: "Tasks", url: "/tasks", icon: ListTodo, counter: "tasks" },
   { title: "Reports", url: "/reports", icon: ChartNoAxesCombined },
   { title: "Team", url: "/team", icon: UserCog },
@@ -71,8 +76,20 @@ type CounterKey =
   | "customers"
   | "reminders"
   | "templates"
+  | "contacts"
   | "tasks"
   | "campaigns";
+
+const counterDescriptions: Record<CounterKey, string> = {
+  inbox: "unread emails",
+  leads: "leads",
+  customers: "customers",
+  reminders: "open reminders",
+  templates: "templates",
+  campaigns: "active campaigns",
+  contacts: "contacts",
+  tasks: "open tasks",
+};
 
 export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const { state } = useSidebar();
@@ -82,7 +99,11 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const qc = useQueryClient();
   const countersFn = useServerFn(getSidebarCounters);
   const [email, setEmail] = useState<string>("");
-  const { data: counters } = useQuery({
+  const {
+    data: counters,
+    isLoading: countersLoading,
+    isError: countersError,
+  } = useQuery({
     queryKey: ["sidebar-counters"],
     queryFn: () => countersFn(),
     refetchInterval: 30000,
@@ -126,6 +147,11 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "campaigns" },
+        () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "contacts" },
         () => qc.invalidateQueries({ queryKey: ["sidebar-counters"] }),
       )
       .on(
@@ -179,26 +205,51 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {nav.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.url)}
-                    tooltip={item.title}
-                    className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-primary data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary-foreground data-[active=true]:shadow-sm"
-                  >
-                    <Link to={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                      {!collapsed && item.counter && (
-                        <span className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground">
-                          {counters?.[item.counter as CounterKey] ?? 0}
-                        </span>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {nav.map((item) => {
+                const counterKey = item.counter as CounterKey | undefined;
+                const counterValue = counterKey
+                  ? counters?.[counterKey]
+                  : undefined;
+                const counterText = countersLoading
+                  ? "…"
+                  : countersError
+                    ? "!"
+                    : counterValue === null
+                      ? "—"
+                      : (counterValue ?? "…");
+                const counterDescription = counterKey
+                  ? counterDescriptions[counterKey]
+                  : "";
+
+                return (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive(item.url)}
+                      tooltip={item.title}
+                      className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-primary data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary-foreground data-[active=true]:shadow-sm"
+                    >
+                      <Link to={item.url}>
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.title}</span>
+                        {!collapsed && counterKey && (
+                          <span
+                            className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
+                            title={
+                              counterValue === null
+                                ? `${item.title} is unavailable until the database migration is applied`
+                                : `${counterText} ${counterDescription}`
+                            }
+                            aria-label={`${counterText} ${counterDescription}`}
+                          >
+                            {counterText}
+                          </span>
+                        )}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

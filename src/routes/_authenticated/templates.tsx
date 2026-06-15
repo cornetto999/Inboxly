@@ -41,11 +41,15 @@ function TemplatesPage() {
       setBody("");
       toast.success("Saved");
       qc.invalidateQueries({ queryKey: ["templates"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
     },
   });
   const rm = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["templates"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
+    },
   });
 
   return (

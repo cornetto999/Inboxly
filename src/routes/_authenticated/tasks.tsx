@@ -28,6 +28,10 @@ import {
 import { CheckCircle2, ListTodo, Trash2 } from "lucide-react";
 import { format, isPast } from "date-fns";
 import { toast } from "sonner";
+import {
+  CrmModuleLoading,
+  CrmModuleUnavailable,
+} from "@/components/crm-module-state";
 
 export const Route = createFileRoute("/_authenticated/tasks")({
   head: () => ({ meta: [{ title: "Tasks - Inboxly" }] }),
@@ -68,7 +72,11 @@ function TasksPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [form, setForm] = useState<TaskForm>(emptyTask);
 
-  const { data: tasks = [] } = useQuery({
+  const {
+    data: tasks = [],
+    isPending: tasksLoading,
+    isError: tasksUnavailable,
+  } = useQuery({
     queryKey: ["tasks", statusFilter],
     queryFn: () => listFn({ data: { status: statusFilter as "all" } }),
   });
@@ -120,6 +128,14 @@ function TasksPage() {
   const overdue = openTasks.filter(
     (task) => task.due_at && isPast(new Date(task.due_at)),
   ).length;
+
+  if (tasksLoading) {
+    return <CrmModuleLoading name="tasks" />;
+  }
+
+  if (tasksUnavailable) {
+    return <CrmModuleUnavailable name="Tasks" />;
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-5 lg:p-8">

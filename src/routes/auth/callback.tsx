@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -16,7 +16,6 @@ export const Route = createFileRoute("/auth/callback")({
 });
 
 function AuthCallbackPage() {
-  const navigate = useNavigate();
   const [message, setMessage] = useState("Finishing Google sign in...");
 
   useEffect(() => {
@@ -37,19 +36,18 @@ function AuthCallbackPage() {
         if (didConsumeHashSession) {
           if (!active) return;
           toast.success("Signed in with Google");
-          navigate({
-            to:
-              localStorage.getItem(GMAIL_CONNECT_PENDING_KEY) === "1"
-                ? "/settings"
-                : "/dashboard",
-            replace: true,
-          });
+          window.location.replace(
+            localStorage.getItem(GMAIL_CONNECT_PENDING_KEY) === "1"
+              ? "/settings"
+              : "/dashboard",
+          );
           return;
         }
 
         const code = url.searchParams.get("code");
         if (code) {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          const { data, error } =
+            await supabase.auth.exchangeCodeForSession(code);
           if (error) throw toError(error, "Google sign-in failed.");
           savePendingGmailConnectionTokenFromSession(data.session);
         } else {
@@ -62,19 +60,17 @@ function AuthCallbackPage() {
 
         if (!active) return;
         toast.success("Signed in with Google");
-        navigate({
-          to:
-            localStorage.getItem(GMAIL_CONNECT_PENDING_KEY) === "1"
-              ? "/settings"
-              : "/dashboard",
-          replace: true,
-        });
+        window.location.replace(
+          localStorage.getItem(GMAIL_CONNECT_PENDING_KEY) === "1"
+            ? "/settings"
+            : "/dashboard",
+        );
       } catch (error) {
         if (!active) return;
         const errorMessage = getErrorMessage(error, "Google sign-in failed");
         setMessage(errorMessage);
         toast.error(errorMessage);
-        navigate({ to: "/auth", replace: true });
+        window.location.replace("/auth");
       }
     };
 
@@ -83,7 +79,7 @@ function AuthCallbackPage() {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">

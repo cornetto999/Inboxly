@@ -32,6 +32,10 @@ import {
 import { Megaphone, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import {
+  CrmModuleLoading,
+  CrmModuleUnavailable,
+} from "@/components/crm-module-state";
 
 export const Route = createFileRoute("/_authenticated/campaigns")({
   head: () => ({ meta: [{ title: "Campaigns - Inboxly" }] }),
@@ -70,7 +74,11 @@ function CampaignsPage() {
   const deleteFn = useServerFn(deleteCampaign);
   const [form, setForm] = useState<CampaignForm>(emptyCampaign);
 
-  const { data: campaigns = [] } = useQuery({
+  const {
+    data: campaigns = [],
+    isPending: campaignsLoading,
+    isError: campaignsUnavailable,
+  } = useQuery({
     queryKey: ["campaigns"],
     queryFn: () => listFn(),
   });
@@ -110,6 +118,14 @@ function CampaignsPage() {
   const scheduled = campaigns.filter(
     (campaign) => campaign.status === "scheduled",
   ).length;
+
+  if (campaignsLoading) {
+    return <CrmModuleLoading name="campaigns" />;
+  }
+
+  if (campaignsUnavailable) {
+    return <CrmModuleUnavailable name="Campaigns" />;
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-5 lg:p-8">

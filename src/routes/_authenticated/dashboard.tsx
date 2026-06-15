@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Percent,
 } from "lucide-react";
+import { format } from "date-fns";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Inboxly" }] }),
@@ -56,6 +57,9 @@ function Dashboard() {
       }
     },
   });
+  const lastEmailSync = data.lastEmailSyncAt
+    ? format(new Date(data.lastEmailSyncAt), "MMM d, yyyy h:mm a")
+    : "Never";
 
   const cards = [
     {
@@ -132,7 +136,7 @@ function Dashboard() {
     },
     {
       label: "Pending Tasks",
-      value: data.pendingTasks,
+      value: data.moduleAvailability.tasks ? data.pendingTasks : "—",
       Icon: ListTodo,
       color: "text-violet-600",
       tone: "bg-violet-500/10",
@@ -141,7 +145,7 @@ function Dashboard() {
     },
     {
       label: "Campaigns",
-      value: data.activeCampaigns,
+      value: data.moduleAvailability.campaigns ? data.activeCampaigns : "—",
       Icon: Megaphone,
       color: "text-fuchsia-600",
       tone: "bg-fuchsia-500/10",
@@ -213,7 +217,7 @@ function Dashboard() {
         <div>
           <Badge variant="outline" className="mb-3 bg-card">
             <Activity className="mr-1 h-3 w-3 text-primary" />
-            Live CRM overview
+            CRM overview
           </Badge>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
@@ -221,12 +225,24 @@ function Dashboard() {
           </p>
         </div>
         <div className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm">
-          <span className="text-muted-foreground">Active customers</span>
-          <span className="ml-3 font-semibold tabular-nums">
-            {data.activeCustomers}
-          </span>
+          <div>
+            <span className="text-muted-foreground">Active customers</span>
+            <span className="ml-3 font-semibold tabular-nums">
+              {data.activeCustomers}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Last Gmail sync: {lastEmailSync}
+          </p>
         </div>
       </div>
+      {(!data.moduleAvailability.tasks ||
+        !data.moduleAvailability.campaigns) && (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+          The expanded CRM database migration is not installed yet. Tasks and
+          campaigns are unavailable until the Supabase migrations are applied.
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => {
           const linkClassName =
@@ -278,15 +294,22 @@ function Dashboard() {
         <MiniChart
           title="Emails received and sent"
           values={data.chartData.emailsByDay}
+          emptyMessage="No email activity has been synced yet."
         />
         <MiniChart
           title="Leads by status"
           values={data.chartData.leadsByStatus}
+          emptyMessage="No leads yet. Convert an inbox email to create the first lead."
         />
-        <MiniChart title="Lead sources" values={data.chartData.leadSources} />
+        <MiniChart
+          title="Lead sources"
+          values={data.chartData.leadSources}
+          emptyMessage="Lead sources will appear after leads are created."
+        />
         <MiniChart
           title="Customer growth"
           values={data.chartData.customerGrowth}
+          emptyMessage="No customers yet. Convert a lead or inbox email to create one."
         />
       </div>
     </div>
@@ -296,9 +319,11 @@ function Dashboard() {
 function MiniChart({
   title,
   values,
+  emptyMessage,
 }: {
   title: string;
   values: Record<string, number | { received: number; sent: number }>;
+  emptyMessage: string;
 }) {
   const entries = Object.entries(values);
   const max = Math.max(
@@ -315,7 +340,7 @@ function MiniChart({
       </CardHeader>
       <CardContent className="space-y-3">
         {entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No records yet.</p>
+          <p className="text-sm text-muted-foreground">{emptyMessage}</p>
         ) : (
           entries.slice(-8).map(([label, value]) => {
             const total =

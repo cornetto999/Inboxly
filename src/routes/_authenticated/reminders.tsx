@@ -45,16 +45,23 @@ function RemindersPage() {
       setDue("");
       toast.success("Created");
       qc.invalidateQueries({ queryKey: ["reminders"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
     },
   });
   const compl = useMutation({
     mutationFn: (v: { id: string; completed: boolean }) =>
       complete({ data: v }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["reminders"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reminders"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
+    },
   });
   const rm = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["reminders"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reminders"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
+    },
   });
 
   const openReminders = rs.filter((reminder) => !reminder.completed_at);

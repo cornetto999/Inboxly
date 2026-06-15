@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -38,7 +39,13 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
+function ErrorComponent({
+  error,
+  reset,
+}: {
+  error: unknown;
+  reset: () => void;
+}) {
   const router = useRouter();
   const normalizedError = useMemo(() => toError(error), [error]);
   useEffect(() => {
@@ -122,21 +129,27 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
 
   useEffect(() => {
+    if (pathname === "/auth/callback") return;
+
     consumeSupabaseUrlSession()
       .then((didConsume) => {
         if (didConsume) {
-          router.navigate({ to: "/dashboard", replace: true });
+          window.location.replace("/dashboard");
         }
       })
       .catch((error) => {
         reportLovableError(error, { boundary: "supabase_url_session" });
       });
-  }, [router]);
+  }, [pathname]);
 
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (window.location.pathname === "/auth/callback") return;
       if (
         event !== "SIGNED_IN" &&
         event !== "SIGNED_OUT" &&

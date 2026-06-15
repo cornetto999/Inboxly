@@ -33,6 +33,10 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  CrmModuleLoading,
+  CrmModuleUnavailable,
+} from "@/components/crm-module-state";
 
 export const Route = createFileRoute("/_authenticated/contacts")({
   head: () => ({ meta: [{ title: "Contacts - Inboxly" }] }),
@@ -71,7 +75,11 @@ function ContactsPage() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<ContactForm>(emptyForm);
 
-  const { data: contacts = [] } = useQuery({
+  const {
+    data: contacts = [],
+    isPending: contactsLoading,
+    isError: contactsUnavailable,
+  } = useQuery({
     queryKey: ["contacts", search],
     queryFn: () => listFn({ data: { search } }),
   });
@@ -157,6 +165,14 @@ function ContactsPage() {
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  if (contactsLoading) {
+    return <CrmModuleLoading name="contacts" />;
+  }
+
+  if (contactsUnavailable) {
+    return <CrmModuleUnavailable name="Contacts" />;
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-5 lg:p-8">

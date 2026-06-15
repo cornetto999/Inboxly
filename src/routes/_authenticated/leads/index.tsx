@@ -99,6 +99,7 @@ function LeadsPage() {
     onSuccess: () => {
       toast.success("Lead deleted");
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
     },
   });
 

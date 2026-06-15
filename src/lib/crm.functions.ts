@@ -20,9 +20,13 @@ function isMissingSupabaseSchemaError(error: unknown) {
       : undefined;
 
   return (
+    code === "42703" ||
+    code === "PGRST204" ||
     code === "PGRST205" ||
     code === "PGRST202" ||
     message.includes("schema cache") ||
+    message.includes("does not exist") ||
+    message.includes("Could not find the") ||
     message.includes("Could not find the table") ||
     message.includes("Could not find the function")
   );
@@ -83,21 +87,61 @@ function groupRowsByDay(rows: { created_at?: string | null }[]) {
   }, {});
 }
 
-function groupEmailsByDay(
-  rows: {
-    received_at?: string | null;
-    sent_at?: string | null;
-    is_sent?: boolean | null;
-  }[],
-) {
+type EmailAnalyticsRow = {
+  is_read: boolean;
+  is_sent?: boolean | null;
+  labels?: string[] | null;
+  received_at?: string | null;
+  sent_at?: string | null;
+  created_at?: string | null;
+};
+
+function isSentEmail(row: EmailAnalyticsRow) {
+  return (
+    Boolean(row.is_sent) ||
+    Boolean(row.labels?.some((label) => label.toUpperCase() === "SENT"))
+  );
+}
+
+function getEmailActivityDate(row: EmailAnalyticsRow) {
+  return isSentEmail(row)
+    ? (row.sent_at ?? row.received_at ?? row.created_at)
+    : (row.received_at ?? row.created_at);
+}
+
+function groupEmailsByDay(rows: EmailAnalyticsRow[]) {
   const byDay: Record<string, { received: number; sent: number }> = {};
   for (const row of rows) {
-    const key = dayKey(row.is_sent ? row.sent_at : row.received_at);
+    const sent = isSentEmail(row);
+    const key = dayKey(getEmailActivityDate(row));
     byDay[key] ??= { received: 0, sent: 0 };
-    if (row.is_sent) byDay[key].sent += 1;
+    if (sent) byDay[key].sent += 1;
     else byDay[key].received += 1;
   }
   return byDay;
+}
+
+async function getEmailAnalyticsRows(supabase: SupabaseClient<Database>) {
+  const enhancedResult = await supabase
+    .from("emails")
+    .select("is_read, is_sent, labels, received_at, sent_at, created_at");
+
+  if (!enhancedResult.error) {
+    return (enhancedResult.data ?? []) as unknown as EmailAnalyticsRow[];
+  }
+
+  if (!isMissingSupabaseSchemaError(enhancedResult.error)) {
+    throw toSupabaseError(enhancedResult.error, "public.emails");
+  }
+
+  const legacyResult = await supabase
+    .from("emails")
+    .select("is_read, labels, received_at, created_at");
+  if (legacyResult.error) {
+    throw toSupabaseError(legacyResult.error, "public.emails");
+  }
+
+  return (legacyResult.data ?? []) as EmailAnalyticsRow[];
 }
 
 // ---------- Roles ----------
@@ -116,76 +160,48 @@ export const getMyRole = createServerFn({ method: "GET" })
 export const getDashboardStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    const isAdmin = await supabase
-      .rpc("has_role", { _user_id: userId, _role: "admin" })
-      .then((r) => Boolean(r.data));
-
+    const { supabase } = context;
     const today = getTodayRange();
-    const scopeLeads = isAdmin
-      ? supabase
-          .from("leads")
-          .select("status, source, created_at", { count: "exact" })
-      : supabase
-          .from("leads")
-          .select("status, source, created_at", { count: "exact" })
-          .eq("owner_id", userId);
-    const scopeCustomers = isAdmin
-      ? supabase
-          .from("customers")
-          .select("status, created_at", { count: "exact" })
-      : supabase
-          .from("customers")
-          .select("status, created_at", { count: "exact" })
-          .eq("owner_id", userId);
-    const scopeEmails = isAdmin
-      ? supabase
-          .from("emails")
-          .select("is_read, is_sent, received_at, sent_at, created_at", {
-            count: "exact",
-          })
-      : supabase
-          .from("emails")
-          .select("is_read, is_sent, received_at, sent_at, created_at", {
-            count: "exact",
-          })
-          .eq("user_id", userId);
 
     const [
-      { data: leads },
-      { data: customers },
-      { data: dueReminders },
-      { data: overdueReminders },
-      { data: emails },
+      leadsResult,
+      customersResult,
+      dueRemindersResult,
+      overdueRemindersResult,
+      emails,
+      emailAccountsResult,
       tasksResult,
       campaignsResult,
       activityResult,
     ] = await Promise.all([
-      scopeLeads,
-      scopeCustomers,
+      supabase
+        .from("leads")
+        .select("status, source, created_at", { count: "exact" }),
+      supabase
+        .from("customers")
+        .select("status, created_at", { count: "exact" }),
       supabase
         .from("reminders")
         .select("id")
-        .eq("user_id", userId)
         .is("completed_at", null)
+        .gte("due_at", today.start)
         .lte("due_at", today.end),
       supabase
         .from("reminders")
         .select("id")
-        .eq("user_id", userId)
         .is("completed_at", null)
         .lt("due_at", today.start),
-      scopeEmails,
+      getEmailAnalyticsRows(supabase),
+      supabase
+        .from("email_accounts")
+        .select("last_sync_at")
+        .order("last_sync_at", { ascending: false, nullsFirst: false })
+        .limit(1),
       supabase
         .from("tasks")
         .select("id, status, due_at")
-        .eq("owner_id", userId)
         .not("status", "in", '("completed","cancelled")'),
-      supabase
-        .from("campaigns")
-        .select("id, status")
-        .eq("owner_id", userId)
-        .eq("status", "active"),
+      supabase.from("campaigns").select("id, status").eq("status", "active"),
       supabase
         .from("activity_logs")
         .select("*")
@@ -193,8 +209,40 @@ export const getDashboardStats = createServerFn({ method: "GET" })
         .limit(20),
     ]);
 
+    if (leadsResult.error) {
+      throw toSupabaseError(leadsResult.error, "public.leads");
+    }
+    if (customersResult.error) {
+      throw toSupabaseError(customersResult.error, "public.customers");
+    }
+    if (dueRemindersResult.error) {
+      throw toSupabaseError(dueRemindersResult.error, "public.reminders");
+    }
+    if (overdueRemindersResult.error) {
+      throw toSupabaseError(overdueRemindersResult.error, "public.reminders");
+    }
+    if (emailAccountsResult.error) {
+      throw toSupabaseError(emailAccountsResult.error, "public.email_accounts");
+    }
+    if (tasksResult.error && !isMissingSupabaseSchemaError(tasksResult.error)) {
+      throw toSupabaseError(tasksResult.error, "public.tasks");
+    }
+    if (
+      campaignsResult.error &&
+      !isMissingSupabaseSchemaError(campaignsResult.error)
+    ) {
+      throw toSupabaseError(campaignsResult.error, "public.campaigns");
+    }
+    if (activityResult.error) {
+      throw toSupabaseError(activityResult.error, "public.activity_logs");
+    }
+
     const byStatus = (rows: { status: string }[] | null, s: string) =>
       (rows ?? []).filter((r) => r.status === s).length;
+    const tasksAvailable = !isMissingSupabaseSchemaError(tasksResult.error);
+    const campaignsAvailable = !isMissingSupabaseSchemaError(
+      campaignsResult.error,
+    );
     const tasks = isMissingSupabaseSchemaError(tasksResult.error)
       ? []
       : (tasksResult.data ?? []);
@@ -204,20 +252,18 @@ export const getDashboardStats = createServerFn({ method: "GET" })
     const activity = isMissingSupabaseSchemaError(activityResult.error)
       ? []
       : (activityResult.data ?? []);
-    const emailRows = emails ?? [];
-    const leadRows = leads ?? [];
-    const customerRows = customers ?? [];
-    const emailsReceivedToday = emailRows.filter((email) =>
-      isBetweenIso(
-        email.received_at ?? email.created_at,
-        today.start,
-        today.end,
-      ),
+    const emailRows = emails;
+    const leadRows = leadsResult.data ?? [];
+    const customerRows = customersResult.data ?? [];
+    const emailsReceivedToday = emailRows.filter(
+      (email) =>
+        !isSentEmail(email) &&
+        isBetweenIso(getEmailActivityDate(email), today.start, today.end),
     ).length;
     const emailsSentToday = emailRows.filter(
       (email) =>
-        Boolean(email.is_sent) &&
-        isBetweenIso(email.sent_at ?? email.created_at, today.start, today.end),
+        isSentEmail(email) &&
+        isBetweenIso(getEmailActivityDate(email), today.start, today.end),
     ).length;
     const responseRate =
       emailsReceivedToday > 0
@@ -238,15 +284,22 @@ export const getDashboardStats = createServerFn({ method: "GET" })
       unreadEmails: emailRows.filter((email) => !email.is_read).length,
       emailsReceivedToday,
       emailsSentToday,
-      followUpsDue: dueReminders?.length ?? 0,
-      overdueReminders: overdueReminders?.length ?? 0,
+      lastEmailSyncAt: emailAccountsResult.data?.[0]?.last_sync_at ?? null,
+      followUpsDue: dueRemindersResult.data?.length ?? 0,
+      overdueReminders: overdueRemindersResult.data?.length ?? 0,
       pendingTasks: tasks.length,
       activeCampaigns: campaigns.length,
+      moduleAvailability: {
+        tasks: tasksAvailable,
+        campaigns: campaignsAvailable,
+      },
       responseRate,
       leadConversionRate: conversionRate,
       wonCustomers: byStatus(leadRows, "won"),
       lostCustomers: byStatus(leadRows, "lost"),
-      activeCustomers: byStatus(customerRows, "active"),
+      activeCustomers: customerRows.filter(
+        (customer) => !["lost", "inactive", "closed"].includes(customer.status),
+      ).length,
       chartData: {
         emailsByDay: groupEmailsByDay(emailRows),
         leadsByStatus: countRowsByField(leadRows, "status"),
@@ -260,72 +313,81 @@ export const getDashboardStats = createServerFn({ method: "GET" })
 export const getSidebarCounters = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    const today = getTodayRange();
-    const results = await Promise.allSettled([
+    const { supabase } = context;
+    const [
+      inboxResult,
+      leadsResult,
+      customersResult,
+      remindersResult,
+      templatesResult,
+      campaignsResult,
+      contactsResult,
+      tasksResult,
+    ] = await Promise.all([
       supabase
         .from("emails")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("is_read", false),
-      supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .eq("owner_id", userId)
-        .in("status", [
-          "new",
-          "contacted",
-          "follow_up",
-          "qualified",
-          "proposal_sent",
-          "negotiation",
-        ]),
-      supabase
-        .from("customers")
-        .select("id", { count: "exact", head: true })
-        .eq("owner_id", userId)
-        .eq("status", "active"),
+        .select("id", { count: "exact" })
+        .eq("is_read", false)
+        .limit(1),
+      supabase.from("leads").select("id", { count: "exact" }).limit(1),
+      supabase.from("customers").select("id", { count: "exact" }).limit(1),
       supabase
         .from("reminders")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
+        .select("id", { count: "exact" })
         .is("completed_at", null)
-        .lte("due_at", today.end),
+        .limit(1),
       supabase
         .from("email_templates")
-        .select("id", { count: "exact", head: true }),
-      supabase
-        .from("tasks")
-        .select("id", { count: "exact", head: true })
-        .eq("owner_id", userId)
-        .not("status", "in", '("completed","cancelled")'),
+        .select("id", { count: "exact" })
+        .limit(1),
       supabase
         .from("campaigns")
-        .select("id", { count: "exact", head: true })
-        .eq("owner_id", userId)
-        .eq("status", "active"),
+        .select("id", { count: "exact" })
+        .eq("status", "active")
+        .limit(1),
+      supabase.from("contacts").select("id", { count: "exact" }).limit(1),
       supabase
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("is_read", false),
+        .from("tasks")
+        .select("id", { count: "exact" })
+        .not("status", "in", '("completed","cancelled")')
+        .limit(1),
     ]);
 
-    const countAt = (index: number) => {
-      const result = results[index];
-      if (result.status !== "fulfilled") return 0;
-      return result.value.count ?? 0;
-    };
+    for (const [result, objectName] of [
+      [inboxResult, "public.emails"],
+      [leadsResult, "public.leads"],
+      [customersResult, "public.customers"],
+      [remindersResult, "public.reminders"],
+      [templatesResult, "public.email_templates"],
+    ] as const) {
+      if (result.error) throw toSupabaseError(result.error, objectName);
+    }
+
+    for (const [result, objectName] of [
+      [campaignsResult, "public.campaigns"],
+      [contactsResult, "public.contacts"],
+      [tasksResult, "public.tasks"],
+    ] as const) {
+      if (result.error && !isMissingSupabaseSchemaError(result.error)) {
+        throw toSupabaseError(result.error, objectName);
+      }
+    }
 
     return {
-      inbox: countAt(0),
-      leads: countAt(1),
-      customers: countAt(2),
-      reminders: countAt(3),
-      templates: countAt(4),
-      tasks: countAt(5),
-      campaigns: countAt(6),
-      notifications: countAt(7),
+      inbox: inboxResult.count ?? 0,
+      leads: leadsResult.count ?? 0,
+      customers: customersResult.count ?? 0,
+      reminders: remindersResult.count ?? 0,
+      templates: templatesResult.count ?? 0,
+      campaigns: isMissingSupabaseSchemaError(campaignsResult.error)
+        ? null
+        : (campaignsResult.count ?? 0),
+      contacts: isMissingSupabaseSchemaError(contactsResult.error)
+        ? null
+        : (contactsResult.count ?? 0),
+      tasks: isMissingSupabaseSchemaError(tasksResult.error)
+        ? null
+        : (tasksResult.count ?? 0),
     };
   });
 
@@ -546,6 +608,18 @@ export const syncGmail = createServerFn({ method: "POST" })
       .single();
     if (accErr || !account) throw new Error("Account not found");
 
+    const enhancedSchemaResult = await context.supabase
+      .from("emails")
+      .select("is_starred")
+      .limit(1);
+    const supportsEnhancedEmailSchema = !enhancedSchemaResult.error;
+    if (
+      enhancedSchemaResult.error &&
+      !isMissingSupabaseSchemaError(enhancedSchemaResult.error)
+    ) {
+      throw toSupabaseError(enhancedSchemaResult.error, "public.emails");
+    }
+
     const listRes = await callGmailApi({
       connectionApiKey: account.connection_api_key,
       path: `/gmail/v1/users/me/messages?maxResults=${data.maxResults ?? 25}&q=in:inbox`,
@@ -557,12 +631,15 @@ export const syncGmail = createServerFn({ method: "POST" })
     let imported = 0;
     for (const mid of messageIds) {
       // skip if exists
-      const { data: existing } = await context.supabase
+      const { data: existing, error: existingError } = await context.supabase
         .from("emails")
         .select("id")
         .eq("account_id", account.id)
         .eq("gmail_message_id", mid)
         .maybeSingle();
+      if (existingError) {
+        throw toSupabaseError(existingError, "public.emails");
+      }
       if (existing) continue;
 
       const msgRes = await callGmailApi({
@@ -595,38 +672,47 @@ export const syncGmail = createServerFn({ method: "POST" })
         : new Date().toISOString();
       const labelIds = msg.labelIds ?? [];
 
-      const { error: insertErr } = await context.supabase
-        .from("emails")
-        .insert({
-          user_id: context.userId,
-          account_id: account.id,
-          gmail_message_id: msg.id,
-          gmail_thread_id: msg.threadId,
-          from_email: from.email,
-          from_name: from.name,
-          to_emails: to,
-          cc_emails: cc,
-          subject,
-          snippet: msg.snippet ?? "",
-          body_html: html,
-          body_text: text,
-          received_at: receivedAt,
-          is_read: !labelIds.includes("UNREAD"),
-          is_starred: labelIds.includes("STARRED"),
-          is_archived:
-            !labelIds.includes("INBOX") && !labelIds.includes("SENT"),
-          is_sent: labelIds.includes("SENT"),
-          is_draft: labelIds.includes("DRAFT"),
-          is_spam: labelIds.includes("SPAM"),
-          is_trashed: labelIds.includes("TRASH"),
-          has_attachments: Boolean(
-            msg.payload?.parts?.some(
-              (part) => part.body && "attachmentId" in part.body,
+      const legacyEmailRow = {
+        user_id: context.userId,
+        account_id: account.id,
+        gmail_message_id: msg.id,
+        gmail_thread_id: msg.threadId,
+        from_email: from.email,
+        from_name: from.name,
+        to_emails: to,
+        cc_emails: cc,
+        subject,
+        snippet: msg.snippet ?? "",
+        body_html: html,
+        body_text: text,
+        received_at: receivedAt,
+        is_read: !labelIds.includes("UNREAD"),
+        labels: labelIds,
+      };
+
+      const emailRow = supportsEnhancedEmailSchema
+        ? {
+            ...legacyEmailRow,
+            is_starred: labelIds.includes("STARRED"),
+            is_archived:
+              !labelIds.includes("INBOX") && !labelIds.includes("SENT"),
+            is_sent: labelIds.includes("SENT"),
+            is_draft: labelIds.includes("DRAFT"),
+            is_spam: labelIds.includes("SPAM"),
+            is_trashed: labelIds.includes("TRASH"),
+            has_attachments: Boolean(
+              msg.payload?.parts?.some(
+                (part) => part.body && "attachmentId" in part.body,
+              ),
             ),
-          ),
-          labels: labelIds,
-        });
-      if (insertErr) throw toSupabaseError(insertErr, "public.emails");
+          }
+        : legacyEmailRow;
+      const { error: insertError } = await context.supabase
+        .from("emails")
+        .insert(emailRow);
+      if (insertError) {
+        throw toSupabaseError(insertError, "public.emails");
+      }
       imported++;
     }
 
@@ -1810,51 +1896,63 @@ export const deleteCampaign = createServerFn({ method: "POST" })
 export const getReportsData = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const [emails, leads, customers, reminders, contacts, tasks, campaigns] =
-      await Promise.allSettled([
-        context.supabase
-          .from("emails")
-          .select("id, is_read, is_sent, received_at, sent_at, created_at"),
-        context.supabase.from("leads").select("id, status, source, created_at"),
-        context.supabase.from("customers").select("id, status, created_at"),
-        context.supabase.from("reminders").select("id, completed_at, due_at"),
-        context.supabase.from("contacts").select("id, source, created_at"),
-        context.supabase
-          .from("tasks")
-          .select("id, status, priority, created_at"),
-        context.supabase
-          .from("campaigns")
-          .select("id, status, sent_count, reply_count, failed_count"),
-      ]);
+    const [
+      emailsData,
+      leadsResult,
+      customersResult,
+      remindersResult,
+      contactsResult,
+      tasksResult,
+      campaignsResult,
+    ] = await Promise.all([
+      getEmailAnalyticsRows(context.supabase),
+      context.supabase.from("leads").select("id, status, source, created_at"),
+      context.supabase.from("customers").select("id, status, created_at"),
+      context.supabase.from("reminders").select("id, completed_at, due_at"),
+      context.supabase.from("contacts").select("id, source, created_at"),
+      context.supabase.from("tasks").select("id, status, priority, created_at"),
+      context.supabase
+        .from("campaigns")
+        .select("id, status, sent_count, reply_count, failed_count"),
+    ]);
 
-    const emailsData =
-      emails.status === "fulfilled" && !emails.value.error
-        ? (emails.value.data ?? [])
-        : [];
-    const leadsData =
-      leads.status === "fulfilled" && !leads.value.error
-        ? (leads.value.data ?? [])
-        : [];
-    const customersData =
-      customers.status === "fulfilled" && !customers.value.error
-        ? (customers.value.data ?? [])
-        : [];
-    const remindersData =
-      reminders.status === "fulfilled" && !reminders.value.error
-        ? (reminders.value.data ?? [])
-        : [];
-    const contactsData =
-      contacts.status === "fulfilled" && !contacts.value.error
-        ? (contacts.value.data ?? [])
-        : [];
-    const tasksData =
-      tasks.status === "fulfilled" && !tasks.value.error
-        ? (tasks.value.data ?? [])
-        : [];
-    const campaignsData =
-      campaigns.status === "fulfilled" && !campaigns.value.error
-        ? (campaigns.value.data ?? [])
-        : [];
+    if (leadsResult.error) {
+      throw toSupabaseError(leadsResult.error, "public.leads");
+    }
+    if (customersResult.error) {
+      throw toSupabaseError(customersResult.error, "public.customers");
+    }
+    if (remindersResult.error) {
+      throw toSupabaseError(remindersResult.error, "public.reminders");
+    }
+    if (
+      contactsResult.error &&
+      !isMissingSupabaseSchemaError(contactsResult.error)
+    ) {
+      throw toSupabaseError(contactsResult.error, "public.contacts");
+    }
+    if (tasksResult.error && !isMissingSupabaseSchemaError(tasksResult.error)) {
+      throw toSupabaseError(tasksResult.error, "public.tasks");
+    }
+    if (
+      campaignsResult.error &&
+      !isMissingSupabaseSchemaError(campaignsResult.error)
+    ) {
+      throw toSupabaseError(campaignsResult.error, "public.campaigns");
+    }
+
+    const leadsData = leadsResult.data ?? [];
+    const customersData = customersResult.data ?? [];
+    const remindersData = remindersResult.data ?? [];
+    const contactsData = isMissingSupabaseSchemaError(contactsResult.error)
+      ? []
+      : (contactsResult.data ?? []);
+    const tasksData = isMissingSupabaseSchemaError(tasksResult.error)
+      ? []
+      : (tasksResult.data ?? []);
+    const campaignsData = isMissingSupabaseSchemaError(campaignsResult.error)
+      ? []
+      : (campaignsResult.data ?? []);
 
     return {
       totals: {
