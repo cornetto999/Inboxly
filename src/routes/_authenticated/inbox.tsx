@@ -442,7 +442,7 @@ function InboxPage() {
     queryKey: ["accounts"],
     queryFn: () => listAcc(),
   });
-  const { data: emails = [], isLoading } = useQuery({
+  const { data: queriedEmails = [], isLoading } = useQuery({
     queryKey: ["emails", search, from, status],
     queryFn: () =>
       listEm({ data: { search, status, fromDate: from || undefined } }),
@@ -498,6 +498,9 @@ function InboxPage() {
     };
   }, [attachments, selected]);
 
+  const emails = queriedEmails.filter((email) =>
+    emailMatchesStatus(email, status),
+  );
   const unreadEmails = emails.filter((email) => !email.is_read);
   const selectedIndex = selected
     ? unreadEmails.findIndex((email) => email.id === selected.id)
