@@ -175,7 +175,7 @@ function ContactsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Contacts</h1>
@@ -302,80 +302,82 @@ function ContactsPage() {
               </p>
             </Card>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Contact</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Tags</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {contacts.map((contact) => (
-                  <TableRow key={contact.id}>
-                    <TableCell>
-                      <button
-                        className="text-left"
-                        onClick={() =>
-                          setForm({
-                            id: contact.id,
-                            email: contact.email,
-                            full_name: contact.full_name ?? "",
-                            phone: contact.phone ?? "",
-                            company: contact.company ?? "",
-                            job_title: contact.job_title ?? "",
-                            tags: (contact.tags ?? []).join(", "),
-                            notes: contact.notes ?? "",
-                          })
-                        }
-                      >
-                        <div className="font-medium">
-                          {contact.full_name || contact.email}
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {contact.email}
-                        </div>
-                      </button>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {contact.company || "Unassigned"}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {(contact.tags ?? []).join(", ") || "None"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Convert to lead"
-                          onClick={() => convertToLead.mutate(contact.id)}
-                        >
-                          <UserPlus className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Convert to customer"
-                          onClick={() => convertToCustomer.mutate(contact.id)}
-                        >
-                          <UserCheck className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Delete"
-                          onClick={() => remove.mutate(contact.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            <div className="overflow-x-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Contact</TableHead>
+                    <TableHead>Company</TableHead>
+                    <TableHead>Tags</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {contacts.map((contact) => (
+                    <TableRow key={contact.id}>
+                      <TableCell>
+                        <button
+                          className="text-left"
+                          onClick={() =>
+                            setForm({
+                              id: contact.id,
+                              email: contact.email,
+                              full_name: contact.full_name ?? "",
+                              phone: contact.phone ?? "",
+                              company: contact.company ?? "",
+                              job_title: contact.job_title ?? "",
+                              tags: (contact.tags ?? []).join(", "),
+                              notes: contact.notes ?? "",
+                            })
+                          }
+                        >
+                          <div className="font-medium">
+                            {contact.full_name || contact.email}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {contact.email}
+                          </div>
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {contact.company || "Unassigned"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {(contact.tags ?? []).join(", ") || "None"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Convert to lead"
+                            onClick={() => convertToLead.mutate(contact.id)}
+                          >
+                            <UserPlus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Convert to customer"
+                            onClick={() => convertToCustomer.mutate(contact.id)}
+                          >
+                            <UserCheck className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Delete"
+                            onClick={() => remove.mutate(contact.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </div>
       </div>

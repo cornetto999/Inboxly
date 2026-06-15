@@ -57,7 +57,7 @@ function AdminPage() {
     return <div className="p-8 text-destructive">{(ue as Error).message}</div>;
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Admin Console</h1>
         <p className="text-sm text-muted-foreground">

@@ -107,7 +107,7 @@ function LeadDetail() {
   const { lead, notes, reminders, emails, activity } = data;
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <Link
         to="/leads"
         search={{ status: undefined }}

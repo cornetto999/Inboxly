@@ -53,7 +53,7 @@ function TeamPage() {
   const canManage = Boolean(role?.isAdmin);
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Team</h1>
@@ -76,72 +76,74 @@ function TeamPage() {
           </p>
         </Card>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Member</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead className="text-right">Manage roles</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {team.map((member) => (
-              <TableRow key={member.id}>
-                <TableCell>
-                  <div className="flex min-w-[220px] items-center gap-3">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
-                      {(member.full_name || member.email || "U")
-                        .slice(0, 1)
-                        .toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">
-                        {member.full_name || member.email || member.id}
-                      </div>
-                      <div className="truncate text-sm text-muted-foreground">
-                        {member.email || "Email private"}
-                      </div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {(member.roles ?? []).map((roleName) => (
-                      <Badge key={roleName} variant="secondary">
-                        <ShieldCheck className="mr-1 h-3 w-3" />
-                        {roleName}
-                      </Badge>
-                    ))}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {ROLES.map((roleName) => {
-                      const hasRole = (member.roles ?? []).includes(roleName);
-                      return (
-                        <Button
-                          key={roleName}
-                          size="sm"
-                          variant={hasRole ? "default" : "outline"}
-                          disabled={!canManage || updateRole.isPending}
-                          onClick={() =>
-                            updateRole.mutate({
-                              user_id: member.id,
-                              role: roleName,
-                              grant: !hasRole,
-                            })
-                          }
-                        >
-                          {roleName}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </TableCell>
+        <div className="overflow-x-auto rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Member</TableHead>
+                <TableHead>Roles</TableHead>
+                <TableHead className="text-right">Manage roles</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {team.map((member) => (
+                <TableRow key={member.id}>
+                  <TableCell>
+                    <div className="flex min-w-[220px] items-center gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                        {(member.full_name || member.email || "U")
+                          .slice(0, 1)
+                          .toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {member.full_name || member.email || member.id}
+                        </div>
+                        <div className="truncate text-sm text-muted-foreground">
+                          {member.email || "Email private"}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(member.roles ?? []).map((roleName) => (
+                        <Badge key={roleName} variant="secondary">
+                          <ShieldCheck className="mr-1 h-3 w-3" />
+                          {roleName}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {ROLES.map((roleName) => {
+                        const hasRole = (member.roles ?? []).includes(roleName);
+                        return (
+                          <Button
+                            key={roleName}
+                            size="sm"
+                            variant={hasRole ? "default" : "outline"}
+                            disabled={!canManage || updateRole.isPending}
+                            onClick={() =>
+                              updateRole.mutate({
+                                user_id: member.id,
+                                role: roleName,
+                                grant: !hasRole,
+                              })
+                            }
+                          >
+                            {roleName}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   );

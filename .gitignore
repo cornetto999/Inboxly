@@ -6,3 +6,4 @@ node_modules
 dist
 .vercel
 .tanstack
+.DS_Store

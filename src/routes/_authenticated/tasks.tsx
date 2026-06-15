@@ -138,7 +138,7 @@ function TasksPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
@@ -198,7 +198,7 @@ function TasksPage() {
               onChange={(due_at) => setForm({ ...form, due_at })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Priority</Label>
               <Select
@@ -284,110 +284,201 @@ function TasksPage() {
               </p>
             </Card>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Due</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              <div className="hidden overflow-x-auto rounded-lg border md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Task</TableHead>
+                      <TableHead>Due</TableHead>
+                      <TableHead>Priority</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tasks.map((task) => {
+                      const isOverdue =
+                        task.due_at &&
+                        !["completed", "cancelled"].includes(task.status) &&
+                        isPast(new Date(task.due_at));
+                      return (
+                        <TableRow key={task.id}>
+                          <TableCell>
+                            <button
+                              className="text-left"
+                              onClick={() =>
+                                setForm({
+                                  id: task.id,
+                                  title: task.title,
+                                  description: task.description ?? "",
+                                  due_at: task.due_at
+                                    ? task.due_at.slice(0, 16)
+                                    : "",
+                                  priority: task.priority,
+                                  status: task.status,
+                                })
+                              }
+                            >
+                              <div className="font-medium">{task.title}</div>
+                              <div className="line-clamp-1 text-sm text-muted-foreground">
+                                {task.description}
+                              </div>
+                            </button>
+                          </TableCell>
+                          <TableCell
+                            className={
+                              isOverdue
+                                ? "text-rose-600"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {task.due_at
+                              ? format(new Date(task.due_at), "PPp")
+                              : "No due date"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{task.priority}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={task.status}
+                              onValueChange={(status) =>
+                                updateStatus.mutate({
+                                  id: task.id,
+                                  status: status as TaskForm["status"],
+                                })
+                              }
+                            >
+                              <SelectTrigger className="w-40 border-transparent bg-transparent shadow-none">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {TASK_STATUSES.map((status) => (
+                                  <SelectItem key={status} value={status}>
+                                    {status.replace(/_/g, " ")}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Complete"
+                                onClick={() =>
+                                  updateStatus.mutate({
+                                    id: task.id,
+                                    status: "completed",
+                                  })
+                                }
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Delete"
+                                onClick={() => remove.mutate(task.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="space-y-3 md:hidden">
                 {tasks.map((task) => {
                   const isOverdue =
                     task.due_at &&
                     !["completed", "cancelled"].includes(task.status) &&
                     isPast(new Date(task.due_at));
                   return (
-                    <TableRow key={task.id}>
-                      <TableCell>
-                        <button
-                          className="text-left"
-                          onClick={() =>
-                            setForm({
-                              id: task.id,
-                              title: task.title,
-                              description: task.description ?? "",
-                              due_at: task.due_at
-                                ? task.due_at.slice(0, 16)
-                                : "",
-                              priority: task.priority,
-                              status: task.status,
-                            })
-                          }
-                        >
-                          <div className="font-medium">{task.title}</div>
-                          <div className="line-clamp-1 text-sm text-muted-foreground">
-                            {task.description}
-                          </div>
-                        </button>
-                      </TableCell>
-                      <TableCell
-                        className={
-                          isOverdue ? "text-rose-600" : "text-muted-foreground"
+                    <Card key={task.id} className="space-y-4 p-4">
+                      <button
+                        className="block w-full text-left"
+                        onClick={() =>
+                          setForm({
+                            id: task.id,
+                            title: task.title,
+                            description: task.description ?? "",
+                            due_at: task.due_at ? task.due_at.slice(0, 16) : "",
+                            priority: task.priority,
+                            status: task.status,
+                          })
                         }
                       >
-                        {task.due_at
-                          ? format(new Date(task.due_at), "PPp")
-                          : "No due date"}
-                      </TableCell>
-                      <TableCell>
+                        <p className="break-words font-medium">{task.title}</p>
+                        <p className="mt-1 line-clamp-3 break-words text-sm text-muted-foreground">
+                          {task.description || "No description"}
+                        </p>
+                      </button>
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
                         <Badge variant="outline">{task.priority}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={task.status}
-                          onValueChange={(status) =>
+                        <span
+                          className={
+                            isOverdue
+                              ? "text-rose-600"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {task.due_at
+                            ? format(new Date(task.due_at), "PPp")
+                            : "No due date"}
+                        </span>
+                      </div>
+                      <Select
+                        value={task.status}
+                        onValueChange={(status) =>
+                          updateStatus.mutate({
+                            id: task.id,
+                            status: status as TaskForm["status"],
+                          })
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TASK_STATUSES.map((taskStatus) => (
+                            <SelectItem key={taskStatus} value={taskStatus}>
+                              {taskStatus.replace(/_/g, " ")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() =>
                             updateStatus.mutate({
                               id: task.id,
-                              status: status as TaskForm["status"],
+                              status: "completed",
                             })
                           }
                         >
-                          <SelectTrigger className="w-40 border-transparent bg-transparent shadow-none">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {TASK_STATUSES.map((status) => (
-                              <SelectItem key={status} value={status}>
-                                {status.replace(/_/g, " ")}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title="Complete"
-                            onClick={() =>
-                              updateStatus.mutate({
-                                id: task.id,
-                                status: "completed",
-                              })
-                            }
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title="Delete"
-                            onClick={() => remove.mutate(task.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          Complete
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => remove.mutate(task.id)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
+                    </Card>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </div>
       </div>

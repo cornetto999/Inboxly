@@ -104,7 +104,7 @@ function LeadsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Leads</h1>
@@ -166,94 +166,167 @@ function LeadsPage() {
           </p>
         </Card>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Lead</TableHead>
-              <TableHead>Company</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-16 text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((l) => (
-              <TableRow key={l.id}>
-                <TableCell>
-                  <Link
-                    to="/leads/$id"
-                    params={{ id: l.id }}
-                    className="group flex min-w-[220px] items-center gap-3"
-                  >
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
-                      {(l.name || l.email).slice(0, 1).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1 font-medium group-hover:text-primary">
-                        <span className="truncate">{l.name || l.email}</span>
-                        <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+        <>
+          <div className="hidden overflow-x-auto rounded-lg border md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Lead</TableHead>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-16 text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell>
+                      <Link
+                        to="/leads/$id"
+                        params={{ id: l.id }}
+                        className="group flex min-w-[220px] items-center gap-3"
+                      >
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                          {(l.name || l.email).slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 font-medium group-hover:text-primary">
+                            <span className="truncate">
+                              {l.name || l.email}
+                            </span>
+                            <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                          </div>
+                          <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
+                            <Mail className="h-3.5 w-3.5" />
+                            <span className="truncate">{l.email}</span>
+                          </div>
+                        </div>
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <div className="flex min-w-[140px] items-center gap-2">
+                        <Building2 className="h-4 w-4" />
+                        <span className="truncate">
+                          {l.company || "Unassigned"}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
-                        <Mail className="h-3.5 w-3.5" />
-                        <span className="truncate">{l.email}</span>
-                      </div>
-                    </div>
-                  </Link>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  <div className="flex min-w-[140px] items-center gap-2">
-                    <Building2 className="h-4 w-4" />
-                    <span className="truncate">
-                      {l.company || "Unassigned"}
-                    </span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
+                      {format(new Date(l.created_at), "MMM d, yyyy")}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={l.status}
+                        onValueChange={(v) =>
+                          updMut.mutate({
+                            id: l.id,
+                            status: v as (typeof STATUSES)[number],
+                          })
+                        }
+                      >
+                        <SelectTrigger className="w-40 border-transparent bg-transparent shadow-none hover:bg-muted">
+                          <Badge
+                            className={STATUS_COLOR[l.status]}
+                            variant="secondary"
+                          >
+                            {STATUS_LABEL[l.status]}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STATUSES.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {STATUS_LABEL[s]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${l.name || l.email}`}
+                        onClick={() =>
+                          confirm("Delete lead?") && delMut.mutate(l.id)
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="space-y-3 md:hidden">
+            {filtered.map((lead) => (
+              <Card key={lead.id} className="space-y-4 p-4">
+                <Link
+                  to="/leads/$id"
+                  params={{ id: lead.id }}
+                  className="flex min-w-0 items-center gap-3"
+                >
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+                    {(lead.name || lead.email).slice(0, 1).toUpperCase()}
                   </div>
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">
-                  {format(new Date(l.created_at), "MMM d, yyyy")}
-                </TableCell>
-                <TableCell>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">
+                      {lead.name || lead.email}
+                    </p>
+                    <p className="break-all text-sm text-muted-foreground">
+                      {lead.email}
+                    </p>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 shrink-0" />
+                </Link>
+                <div className="grid gap-2 text-sm">
+                  <p className="flex items-center gap-2 text-muted-foreground">
+                    <Building2 className="h-4 w-4 shrink-0" />
+                    <span className="break-words">
+                      {lead.company || "Unassigned"}
+                    </span>
+                  </p>
+                  <p className="text-muted-foreground">
+                    Created {format(new Date(lead.created_at), "MMM d, yyyy")}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
                   <Select
-                    value={l.status}
-                    onValueChange={(v) =>
+                    value={lead.status}
+                    onValueChange={(value) =>
                       updMut.mutate({
-                        id: l.id,
-                        status: v as (typeof STATUSES)[number],
+                        id: lead.id,
+                        status: value as LeadStatus,
                       })
                     }
                   >
-                    <SelectTrigger className="w-40 border-transparent bg-transparent shadow-none hover:bg-muted">
-                      <Badge
-                        className={STATUS_COLOR[l.status]}
-                        variant="secondary"
-                      >
-                        {STATUS_LABEL[l.status]}
-                      </Badge>
+                    <SelectTrigger className="min-w-0 flex-1">
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {STATUSES.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {STATUS_LABEL[s]}
+                      {STATUSES.map((leadStatus) => (
+                        <SelectItem key={leadStatus} value={leadStatus}>
+                          {STATUS_LABEL[leadStatus]}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </TableCell>
-                <TableCell className="text-right">
                   <Button
                     size="icon"
-                    variant="ghost"
-                    aria-label={`Delete ${l.name || l.email}`}
+                    variant="outline"
+                    aria-label={`Delete ${lead.name || lead.email}`}
                     onClick={() =>
-                      confirm("Delete lead?") && delMut.mutate(l.id)
+                      confirm("Delete lead?") && delMut.mutate(lead.id)
                     }
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
-                </TableCell>
-              </TableRow>
+                </div>
+              </Card>
             ))}
-          </TableBody>
-        </Table>
+          </div>
+        </>
       )}
     </div>
   );

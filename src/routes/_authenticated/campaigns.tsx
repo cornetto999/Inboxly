@@ -128,7 +128,7 @@ function CampaignsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Campaigns</h1>
@@ -239,68 +239,70 @@ function CampaignsPage() {
             </p>
           </Card>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Campaign</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Schedule</TableHead>
-                <TableHead>Performance</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {campaigns.map((campaign) => (
-                <TableRow key={campaign.id}>
-                  <TableCell>
-                    <button
-                      className="text-left"
-                      onClick={() =>
-                        setForm({
-                          id: campaign.id,
-                          name: campaign.name,
-                          subject: campaign.subject,
-                          body: campaign.body,
-                          status: campaign.status,
-                          scheduled_at: campaign.scheduled_at
-                            ? campaign.scheduled_at.slice(0, 16)
-                            : "",
-                        })
-                      }
-                    >
-                      <div className="font-medium">{campaign.name}</div>
-                      <div className="line-clamp-1 text-sm text-muted-foreground">
-                        {campaign.subject}
-                      </div>
-                    </button>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{campaign.status}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {campaign.scheduled_at
-                      ? format(new Date(campaign.scheduled_at), "PPp")
-                      : "Not scheduled"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    Sent {campaign.sent_count} / Replies {campaign.reply_count}{" "}
-                    / Failed {campaign.failed_count}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => remove.mutate(campaign.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          <div className="overflow-x-auto rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Campaign</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>Performance</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {campaigns.map((campaign) => (
+                  <TableRow key={campaign.id}>
+                    <TableCell>
+                      <button
+                        className="text-left"
+                        onClick={() =>
+                          setForm({
+                            id: campaign.id,
+                            name: campaign.name,
+                            subject: campaign.subject,
+                            body: campaign.body,
+                            status: campaign.status,
+                            scheduled_at: campaign.scheduled_at
+                              ? campaign.scheduled_at.slice(0, 16)
+                              : "",
+                          })
+                        }
+                      >
+                        <div className="font-medium">{campaign.name}</div>
+                        <div className="line-clamp-1 text-sm text-muted-foreground">
+                          {campaign.subject}
+                        </div>
+                      </button>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{campaign.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {campaign.scheduled_at
+                        ? format(new Date(campaign.scheduled_at), "PPp")
+                        : "Not scheduled"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      Sent {campaign.sent_count} / Replies{" "}
+                      {campaign.reply_count} / Failed {campaign.failed_count}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => remove.mutate(campaign.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
     </div>

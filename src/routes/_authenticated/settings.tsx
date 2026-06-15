@@ -21,7 +21,33 @@ import { getErrorMessage, toError } from "@/lib/errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Mail, Trash2, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  CheckCircle2,
+  Info,
+  Loader2,
+  Mail,
+  MoreHorizontal,
+  RefreshCw,
+  ShieldCheck,
+  Unplug,
+} from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -41,6 +67,17 @@ function SettingsPage() {
     queryFn: () => list(),
   });
   const [connecting, setConnecting] = useState(false);
+  const [disconnectAccountId, setDisconnectAccountId] = useState<string | null>(
+    null,
+  );
+  const primaryAccount = accounts[0];
+  const connectionStatus = connecting
+    ? "connecting"
+    : (primaryAccount?.connection_status ?? "disconnected");
+  const reconnectRequired = connectionStatus === "reauthentication_required";
+  const connected =
+    connectionStatus === "connected" || connectionStatus === "sync_failed";
+  const syncing = connectionStatus === "syncing";
 
   const invalidateEmailData = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -90,7 +127,9 @@ function SettingsPage() {
     });
     clearPendingGmailConnectionToken();
     localStorage.removeItem(GMAIL_CONNECT_PENDING_KEY);
-    toast.success("Gmail reconnected. Automatic sync is enabled.");
+    toast.success(
+      "Gmail reconnected successfully. Email synchronization has started.",
+    );
     showSyncResult(result);
     invalidateEmailData();
     return true;
@@ -149,6 +188,8 @@ function SettingsPage() {
     return () => {
       active = false;
     };
+    // This runs once after the OAuth callback restores the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const rm = useMutation({
@@ -170,7 +211,7 @@ function SettingsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-5 lg:p-8">
+    <div className="mx-auto max-w-4xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
@@ -178,7 +219,7 @@ function SettingsPage() {
         </p>
       </div>
 
-      <Card className="space-y-5 border-border/80 p-5 shadow-sm">
+      <Card className="space-y-5 border-border/80 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex items-start gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-lg bg-primary/10 text-primary">
@@ -201,9 +242,31 @@ function SettingsPage() {
               </p>
             </div>
           </div>
-          <Button onClick={handleConnect} disabled={connecting}>
-            {connecting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {accounts.length > 0 ? "Reconnect Gmail" : "Connect Gmail"}
+          <Button
+            onClick={
+              !connected && !syncing && !connecting ? handleConnect : undefined
+            }
+            disabled={connected || syncing || connecting}
+            aria-disabled={connected || syncing || connecting}
+            className={
+              connected
+                ? "cursor-not-allowed hover:bg-primary hover:text-primary-foreground"
+                : ""
+            }
+          >
+            {(connecting || syncing) && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            {connected && <CheckCircle2 className="mr-2 h-4 w-4" />}
+            {connecting
+              ? "Connecting..."
+              : syncing
+                ? "Syncing..."
+                : connected
+                  ? "Connected"
+                  : reconnectRequired
+                    ? "Reconnect Gmail"
+                    : "Connect Gmail"}
           </Button>
         </div>
 
@@ -215,41 +278,118 @@ function SettingsPage() {
                 className="flex items-center justify-between gap-4 p-4"
               >
                 <div className="min-w-0">
-                  <div className="font-medium">{a.email_address}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="break-all font-medium">
+                      {a.email_address}
+                    </div>
+                    <Badge
+                      variant={
+                        a.connection_status === "reauthentication_required"
+                          ? "destructive"
+                          : "secondary"
+                      }
+                    >
+                      {a.connection_status === "reauthentication_required"
+                        ? "Reconnect required"
+                        : a.connection_status === "syncing"
+                          ? "Syncing"
+                          : a.connection_status === "sync_failed"
+                            ? "Sync failed"
+                            : "Connected"}
+                    </Badge>
+                  </div>
                   <div className="text-xs text-muted-foreground">
-                    {a.last_sync_at
-                      ? `Last sync ${format(new Date(a.last_sync_at), "PPp")}`
+                    {(a.last_synced_at ?? a.last_sync_at)
+                      ? `Last synced ${format(
+                          new Date(a.last_synced_at ?? a.last_sync_at!),
+                          "PPp",
+                        )}`
                       : "Not synced yet"}
                   </div>
+                  {a.last_sync_error && (
+                    <p className="mt-1 line-clamp-2 text-xs text-destructive">
+                      {a.last_sync_error}
+                    </p>
+                  )}
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    title="Sync now"
-                    aria-label="Sync now"
-                    onClick={() => syncMut.mutate(a.id)}
-                    disabled={syncMut.isPending || connecting}
-                  >
-                    {syncMut.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => rm.mutate(a.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Manage ${a.email_address}`}
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => syncMut.mutate(a.id)}
+                      disabled={
+                        syncMut.isPending ||
+                        connecting ||
+                        a.connection_status === "reauthentication_required"
+                      }
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      {a.connection_status === "sync_failed"
+                        ? "Retry sync"
+                        : "Sync now"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleConnect}>
+                      <Mail className="mr-2 h-4 w-4" />
+                      Reconnect account
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        toast.info(
+                          `Connected as ${a.email_address}. Status: ${a.connection_status}.`,
+                        )
+                      }
+                    >
+                      <Info className="mr-2 h-4 w-4" />
+                      View account details
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => setDisconnectAccountId(a.id)}
+                    >
+                      <Unplug className="mr-2 h-4 w-4" />
+                      Disconnect Gmail
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
           </div>
         )}
       </Card>
+
+      <AlertDialog
+        open={Boolean(disconnectAccountId)}
+        onOpenChange={(open) => !open && setDisconnectAccountId(null)}
+      >
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect Gmail?</AlertDialogTitle>
+            <AlertDialogDescription>
+              New emails will stop syncing, but existing CRM data will remain.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (disconnectAccountId) rm.mutate(disconnectAccountId);
+                setDisconnectAccountId(null);
+              }}
+            >
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -25,6 +25,7 @@ function normalizeEmailFolderCounts(
     unread: Math.max(0, counts.unread ?? 0),
     read: Math.max(0, counts.read ?? 0),
     starred: Math.max(0, counts.starred ?? 0),
+    replied: Math.max(0, counts.replied ?? 0),
     sent: Math.max(0, counts.sent ?? 0),
     drafts: Math.max(0, counts.drafts ?? 0),
     archived: Math.max(0, counts.archived ?? 0),
@@ -56,8 +57,7 @@ export function useEmailFolderCounts(emailAccountId?: string) {
       const previous =
         queryClient.getQueryData<EmailFolderCounts>(queryKey) ??
         EMPTY_EMAIL_FOLDER_COUNTS;
-      const patch =
-        typeof update === "function" ? update(previous) : update;
+      const patch = typeof update === "function" ? update(previous) : update;
       const next = normalizeEmailFolderCounts({ ...previous, ...patch });
 
       queryClient.setQueryData(queryKey, next);
@@ -67,9 +67,7 @@ export function useEmailFolderCounts(emailAccountId?: string) {
   );
 
   return {
-    counts: normalizeEmailFolderCounts(
-      query.data ?? EMPTY_EMAIL_FOLDER_COUNTS,
-    ),
+    counts: normalizeEmailFolderCounts(query.data ?? EMPTY_EMAIL_FOLDER_COUNTS),
     isLoading: query.isLoading,
     error: query.error,
     refreshCounts,

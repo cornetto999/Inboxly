@@ -86,7 +86,7 @@ function CustomerDetail() {
   const { customer, notes, reminders, emails, activity } = data;
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <Link
         to="/customers"
         className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"

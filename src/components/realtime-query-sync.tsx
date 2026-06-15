@@ -16,6 +16,8 @@ const TABLE_QUERY_KEYS: Record<string, readonly (readonly string[])[]> = {
   contacts: [["contacts"]],
   customers: [["customers"], ["customer"], ["contacts"]],
   email_accounts: [["accounts"], ["emails"]],
+  email_attachments: [["email-attachments"]],
+  email_threads: [["emails"], ["email-folder-counts"]],
   email_templates: [["templates"]],
   emails: [
     ["emails"],

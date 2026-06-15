@@ -92,7 +92,7 @@ function ReportsPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
         <p className="text-sm text-muted-foreground">
@@ -154,8 +154,8 @@ function ReportsPage() {
         open={!!selectedKind}
         onOpenChange={(open) => !open && setSelectedKind(null)}
       >
-        <DialogContent className="flex max-h-[88vh] max-w-6xl flex-col overflow-hidden p-0">
-          <DialogHeader className="border-b px-6 py-5 text-left">
+        <DialogContent className="flex h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none p-0 sm:h-[88dvh] sm:w-[calc(100%-2rem)] sm:max-w-6xl sm:rounded-lg">
+          <DialogHeader className="border-b px-4 py-4 pr-12 text-left sm:px-6 sm:py-5">
             <DialogTitle>{drilldown?.title ?? "Report details"}</DialogTitle>
             <DialogDescription>
               Latest matching records, updated automatically when CRM data
@@ -163,7 +163,7 @@ function ReportsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 overflow-auto p-6">
+          <div className="min-h-0 overflow-auto p-3 sm:p-6">
             {drilldownLoading ? (
               <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -180,7 +180,7 @@ function ReportsPage() {
                 No records found for this report.
               </div>
             ) : (
-              <div className="rounded-lg border">
+              <div className="overflow-x-auto rounded-lg border">
                 <Table>
                   <TableHeader>
                     <TableRow>

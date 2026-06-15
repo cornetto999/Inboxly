@@ -25,10 +25,17 @@ export function AutoGmailSync() {
     if (syncing.current || accounts.length === 0) return;
 
     const staleAccounts = accounts.filter((account) => {
-      if (!account.last_sync_at) return true;
+      if (
+        account.connection_status === "reauthentication_required" ||
+        account.connection_status === "disconnected" ||
+        account.connection_status === "connecting"
+      ) {
+        return false;
+      }
+      const lastSyncedAt = account.last_synced_at ?? account.last_sync_at;
+      if (!lastSyncedAt) return true;
       return (
-        Date.now() - new Date(account.last_sync_at).getTime() >=
-        AUTO_SYNC_STALE_MS
+        Date.now() - new Date(lastSyncedAt).getTime() >= AUTO_SYNC_STALE_MS
       );
     });
     if (staleAccounts.length === 0) return;

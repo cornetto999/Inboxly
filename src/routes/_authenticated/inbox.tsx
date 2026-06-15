@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   listEmails,
   listEmailAccounts,
@@ -16,7 +16,7 @@ import {
   trashEmail,
   bulkUpdateEmails,
   listEmailAttachments,
-  getEmailAttachment,
+  getEmailThread,
 } from "@/lib/crm.functions";
 import type { EmailFolderCounts } from "@/lib/crm.functions";
 import { useEmailFolderCounts } from "@/hooks/use-email-folder-counts";
@@ -35,6 +35,15 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -72,15 +81,18 @@ import {
   Eye,
   Printer,
   FileText,
+  FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { supabase } from "@/integrations/supabase/client";
 
 const EMAIL_STATUSES = [
   "all",
   "unread",
   "read",
   "starred",
+  "replied",
   "sent",
   "drafts",
   "archived",
@@ -116,6 +128,11 @@ const EMAIL_STATUS_META: Record<
     label: "Starred",
     countKey: "starred",
     description: "Messages with the Gmail STARRED label.",
+  },
+  replied: {
+    label: "Replied",
+    countKey: "replied",
+    description: "Incoming Gmail conversations that received a later reply.",
   },
   sent: {
     label: "Sent",
@@ -174,6 +191,7 @@ const EMAIL_COUNT_KEYS = [
   "unread",
   "read",
   "starred",
+  "replied",
   "sent",
   "drafts",
   "archived",
@@ -309,6 +327,81 @@ function formatFolderCount(count: number) {
   return new Intl.NumberFormat().format(count);
 }
 
+type EmailQuerySnapshot = [readonly unknown[], Email[] | undefined];
+
+function emailMatchesStatus(email: Email, status: unknown) {
+  if (status === "unread") return !email.is_read;
+  if (status === "read") {
+    return (
+      email.is_read && !email.is_spam && !email.is_trashed && !email.is_draft
+    );
+  }
+  if (status === "starred") return email.is_starred;
+  if (status === "sent") return email.is_sent;
+  if (status === "drafts") return email.is_draft;
+  if (status === "archived") {
+    return (
+      email.is_archived &&
+      !email.is_sent &&
+      !email.is_draft &&
+      !email.is_spam &&
+      !email.is_trashed
+    );
+  }
+  if (status === "spam") return email.is_spam;
+  if (status === "trash") return email.is_trashed;
+  return true;
+}
+
+async function fetchAttachmentResponse(
+  attachmentId: string,
+  disposition: "inline" | "attachment" = "inline",
+) {
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    throw new Error("You must sign in again to load this attachment.");
+  }
+  const response = await fetch(
+    `/api/gmail/attachments/${encodeURIComponent(
+      attachmentId,
+    )}?disposition=${disposition}`,
+    {
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+      },
+    },
+  );
+  if (response.ok) return response;
+
+  const payload = (await response.json().catch(() => null)) as {
+    error?: string;
+  } | null;
+  if (response.status === 409) {
+    throw new Error(
+      "Your Gmail connection has expired. Reconnect your account in Settings.",
+    );
+  }
+  if (response.status === 403) {
+    throw new Error("You do not have access to this attachment.");
+  }
+  if (response.status === 404) {
+    throw new Error(
+      payload?.error ?? "This attachment is no longer available in Gmail.",
+    );
+  }
+  throw new Error(
+    payload?.error ?? "The attachment could not be loaded. Please try again.",
+  );
+}
+
+function isPreviewableMimeType(mimeType: string) {
+  return (
+    mimeType === "application/pdf" ||
+    mimeType.startsWith("image/") ||
+    mimeType.startsWith("text/")
+  );
+}
+
 function InboxPage() {
   const qc = useQueryClient();
   const listEm = useServerFn(listEmails);
@@ -322,7 +415,7 @@ function InboxPage() {
   const mkTrash = useServerFn(trashEmail);
   const mkBulk = useServerFn(bulkUpdateEmails);
   const listAttachments = useServerFn(listEmailAttachments);
-  const getAttachment = useServerFn(getEmailAttachment);
+  const listThread = useServerFn(getEmailThread);
   const { status } = Route.useSearch();
   const showingUnread = status === "unread";
   const {
@@ -341,6 +434,9 @@ function InboxPage() {
     id: string;
     action: AttachmentAction;
   } | null>(null);
+  const [inlineAttachmentUrls, setInlineAttachmentUrls] = useState<
+    Record<string, string>
+  >({});
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -361,6 +457,46 @@ function InboxPage() {
     enabled: !!selected,
     staleTime: 10 * 60 * 1000,
   });
+  const { data: threadMessages = [] } = useQuery({
+    queryKey: ["email-thread", selected?.id],
+    queryFn: () => listThread({ data: { emailId: selected!.id } }),
+    enabled: !!selected,
+  });
+
+  useEffect(() => {
+    let active = true;
+    const objectUrls: string[] = [];
+    const inlineAttachments = attachments.filter(
+      (attachment) => attachment.isInline && attachment.contentId,
+    );
+    if (!selected || inlineAttachments.length === 0) {
+      setInlineAttachmentUrls({});
+      return;
+    }
+
+    void Promise.all(
+      inlineAttachments.map(async (attachment) => {
+        const response = await fetchAttachmentResponse(attachment.id);
+        const url = URL.createObjectURL(await response.blob());
+        objectUrls.push(url);
+        return [attachment.contentId!, url] as const;
+      }),
+    )
+      .then((entries) => {
+        if (active) setInlineAttachmentUrls(Object.fromEntries(entries));
+      })
+      .catch((error) => {
+        if (active) {
+          console.warn("Inline Gmail attachment failed to load.", error);
+          setInlineAttachmentUrls({});
+        }
+      });
+
+    return () => {
+      active = false;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [attachments, selected]);
 
   const unreadEmails = emails.filter((email) => !email.is_read);
   const selectedIndex = selected
@@ -376,6 +512,27 @@ function InboxPage() {
 
   const restoreFolderCounts = (snapshot?: EmailFolderCounts) => {
     if (snapshot) updateCountOptimistically(() => snapshot);
+  };
+
+  const patchCachedEmail = (id: string, patch: Partial<Email>) => {
+    const snapshots = qc.getQueriesData<Email[]>({ queryKey: ["emails"] });
+    for (const [queryKey, rows] of snapshots) {
+      if (!rows) continue;
+      const queryStatus = queryKey[3];
+      qc.setQueryData<Email[]>(
+        queryKey,
+        rows
+          .map((row) => (row.id === id ? { ...row, ...patch } : row))
+          .filter((row) => emailMatchesStatus(row, queryStatus)),
+      );
+    }
+    return snapshots as EmailQuerySnapshot[];
+  };
+
+  const restoreEmailCaches = (snapshots?: EmailQuerySnapshot[]) => {
+    snapshots?.forEach(([queryKey, rows]) => {
+      qc.setQueryData(queryKey, rows);
+    });
   };
 
   const applyOptimisticEmailPatch = (email: Email, patch: Partial<Email>) => {
@@ -458,17 +615,20 @@ function InboxPage() {
   });
 
   const openEmail = async (e: Email) => {
-    setSelected(e.is_read ? e : { ...e, is_read: true });
+    const readPatch = {
+      is_read: true,
+      labels: updateEmailLabels(e.labels, [], ["UNREAD"]),
+    };
+    setSelected(e.is_read ? e : { ...e, ...readPatch });
     if (!e.is_read) {
-      const previousCounts = applyOptimisticEmailPatch(e, {
-        is_read: true,
-        labels: updateEmailLabels(e.labels, [], ["UNREAD"]),
-      });
+      const previousCounts = applyOptimisticEmailPatch(e, readPatch);
+      const previousEmailCaches = patchCachedEmail(e.id, readPatch);
       try {
         await mkRead({ data: { id: e.id, isRead: true } });
         invalidateInbox();
       } catch (error) {
         restoreFolderCounts(previousCounts);
+        restoreEmailCaches(previousEmailCaches);
         setSelected(e);
         toast.error(
           error instanceof Error ? error.message : "Could not mark email read.",
@@ -491,16 +651,24 @@ function InboxPage() {
           variables.isRead ? ["UNREAD"] : [],
         ),
       });
+      const patch = {
+        is_read: variables.isRead,
+        labels: updateEmailLabels(
+          email.labels,
+          variables.isRead ? [] : ["UNREAD"],
+          variables.isRead ? ["UNREAD"] : [],
+        ),
+      };
+      const previousEmailCaches = patchCachedEmail(email.id, patch);
       const previousSelected = selected;
       setSelected((email) =>
-        email?.id === variables.id
-          ? { ...email, is_read: variables.isRead }
-          : email,
+        email?.id === variables.id ? { ...email, ...patch } : email,
       );
-      return { previousCounts, previousSelected };
+      return { previousCounts, previousSelected, previousEmailCaches };
     },
     onError: (error: Error, _variables, context) => {
       restoreFolderCounts(context?.previousCounts);
+      restoreEmailCaches(context?.previousEmailCaches);
       if (context && "previousSelected" in context) {
         setSelected(context.previousSelected ?? null);
       }
@@ -638,18 +806,17 @@ function InboxPage() {
 
     setAttachmentAction({ id: attachment.id, action });
     try {
-      const file = await getAttachment({
-        data: {
-          emailId: selected.id,
-          attachmentId: attachment.id,
-          filename: attachment.filename,
-          mimeType: attachment.mimeType,
-          size: attachment.size,
-        },
-      });
-      const blob = base64ToBlob(file.data, file.mimeType);
+      if (action === "download")
+        toast.loading("Downloading attachment...", {
+          id: `attachment-${attachment.id}`,
+        });
+      const response = await fetchAttachmentResponse(
+        attachment.id,
+        action === "download" ? "attachment" : "inline",
+      );
+      const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      const filename = file.filename || attachment.filename;
+      const filename = attachment.filename;
 
       if (action === "download") {
         const link = document.createElement("a");
@@ -659,23 +826,80 @@ function InboxPage() {
         link.click();
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        toast.success("Attachment downloaded successfully.", {
+          id: `attachment-${attachment.id}`,
+        });
+        return;
+      }
+
+      if (!isPreviewableMimeType(attachment.mimeType)) {
+        previewWindow?.close();
+        if (action === "print") {
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          toast.info(
+            "This file must be opened in a compatible application before printing.",
+          );
+        } else {
+          toast.info(
+            "This file cannot be previewed. You can download it instead.",
+          );
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
         return;
       }
 
       if (action === "view") {
-        previewWindow!.location.href = url;
+        if (attachment.mimeType.startsWith("text/")) {
+          const text = await blob.text();
+          previewWindow!.document.open();
+          previewWindow!.document.write(
+            createTextDocument(
+              attachment.mimeType === "text/html"
+                ? sanitizeHtml(text, {})
+                : escapeHtml(text),
+              filename,
+              attachment.mimeType === "text/html",
+              false,
+            ),
+          );
+          previewWindow!.document.close();
+        } else {
+          previewWindow!.location.href = url;
+        }
         window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
         return;
       }
 
       previewWindow!.document.open();
-      previewWindow!.document.write(createPrintDocument(url, filename));
+      if (attachment.mimeType.startsWith("image/")) {
+        previewWindow!.document.write(createImagePrintDocument(url, filename));
+      } else if (attachment.mimeType.startsWith("text/")) {
+        const text = await blob.text();
+        previewWindow!.document.write(
+          createTextDocument(
+            attachment.mimeType === "text/html"
+              ? sanitizeHtml(text, {})
+              : escapeHtml(text),
+            filename,
+            attachment.mimeType === "text/html",
+            true,
+          ),
+        );
+      } else {
+        previewWindow!.document.write(createPrintDocument(url, filename));
+      }
       previewWindow!.document.close();
       window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
     } catch (error) {
       previewWindow?.close();
       toast.error(
         error instanceof Error ? error.message : "Attachment action failed.",
+        { id: `attachment-${attachment.id}` },
       );
     } finally {
       setAttachmentAction(null);
@@ -683,7 +907,11 @@ function InboxPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
+    <div
+      className={`mx-auto p-3 sm:p-5 lg:p-8 ${
+        selected ? "lg:max-w-none lg:pr-[60vw]" : "max-w-7xl"
+      }`}
+    >
       <div className="mb-5 flex flex-col justify-between gap-4 sm:mb-6 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Inbox</h1>
@@ -718,7 +946,55 @@ function InboxPage() {
       <Card className="mb-4 border-border/80 p-3 shadow-sm sm:p-4">
         <div className="mb-3 flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="-mx-1 w-full overflow-x-auto pb-1 sm:mx-0 sm:overflow-visible sm:pb-0">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-between sm:hidden"
+                >
+                  <span className="flex items-center gap-2">
+                    <FolderOpen className="h-4 w-4" />
+                    {EMAIL_STATUS_META[status].label}
+                  </span>
+                  <Badge variant="secondary">
+                    {formatFolderCount(
+                      folderCounts[EMAIL_STATUS_META[status].countKey],
+                    )}
+                  </Badge>
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[min(88vw,340px)]">
+                <SheetHeader className="text-left">
+                  <SheetTitle>Inbox folders</SheetTitle>
+                  <SheetDescription>
+                    Choose which Gmail messages to display.
+                  </SheetDescription>
+                </SheetHeader>
+                <nav className="mt-6 space-y-1">
+                  {EMAIL_STATUSES.map((folder) => {
+                    const meta = EMAIL_STATUS_META[folder];
+                    return (
+                      <SheetClose key={folder} asChild>
+                        <Link
+                          to="/inbox"
+                          search={{ status: folder }}
+                          className={`flex h-10 w-full items-center justify-between rounded-md px-3 text-sm font-medium transition-colors hover:bg-accent ${
+                            status === folder ? "bg-secondary" : ""
+                          }`}
+                        >
+                          <span>{meta.label}</span>
+                          <span className="text-xs">
+                            {formatFolderCount(folderCounts[meta.countKey])}
+                          </span>
+                        </Link>
+                      </SheetClose>
+                    );
+                  })}
+                </nav>
+              </SheetContent>
+            </Sheet>
+            <div className="-mx-1 hidden w-full overflow-x-auto pb-1 sm:mx-0 sm:block sm:overflow-visible sm:pb-0">
               <div className="flex min-w-max gap-2 px-1 sm:min-w-0 sm:flex-wrap sm:px-0">
                 {EMAIL_STATUSES.map((filter) => {
                   const meta = EMAIL_STATUS_META[filter];
@@ -1130,13 +1406,27 @@ function InboxPage() {
       </Card>
 
       <Dialog
+        modal={false}
         open={!!selected}
         onOpenChange={(open) => !open && setSelected(null)}
       >
-        <DialogContent className="flex h-[100dvh] w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-border/70 bg-background p-0 shadow-2xl sm:h-[min(90dvh,860px)] sm:w-[calc(100%-2rem)] sm:max-w-4xl sm:rounded-2xl">
+        <DialogContent
+          hideOverlay
+          className="flex h-[100dvh] w-full max-w-none flex-col gap-0 overflow-hidden rounded-none border-border/70 bg-background p-0 shadow-2xl sm:h-[min(90dvh,860px)] sm:w-[calc(100%-2rem)] sm:max-w-4xl sm:rounded-2xl lg:left-auto lg:right-4 lg:top-[4.5rem] lg:h-[calc(100dvh-5.5rem)] lg:w-[58vw] lg:max-w-none lg:translate-x-0 lg:translate-y-0"
+        >
           {selected && (
             <>
               <DialogHeader className="border-b bg-card px-4 py-4 pr-12 text-left sm:px-7 sm:py-5 sm:pr-14">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="mb-1 w-fit lg:hidden"
+                  onClick={() => setSelected(null)}
+                >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Back to Inbox
+                </Button>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge
                     variant="outline"
@@ -1332,19 +1622,50 @@ function InboxPage() {
                     pendingAction={attachmentAction}
                     onAction={handleAttachmentAction}
                   />
-                  <article
-                    className={`prose prose-sm dark:prose-invert max-w-none overflow-x-auto break-words rounded-xl border border-border/80 bg-card p-4 leading-relaxed shadow-sm sm:p-7 [&_img]:h-auto [&_img]:max-w-full [&_pre]:overflow-x-auto [&_table]:w-full [&_table]:overflow-x-auto ${
-                      selected.body_html ? "" : "whitespace-pre-wrap"
-                    }`}
-                    dangerouslySetInnerHTML={{
-                      __html: sanitizeHtml(
-                        selected.body_html ||
-                          selected.body_text ||
-                          selected.snippet ||
-                          "",
-                      ),
-                    }}
-                  />
+                  <div className="space-y-4">
+                    {(threadMessages.length > 0
+                      ? threadMessages
+                      : [selected]
+                    ).map((message) => (
+                      <section
+                        key={message.id}
+                        className="min-w-0 rounded-xl border border-border/80 bg-card shadow-sm"
+                      >
+                        {threadMessages.length > 1 && (
+                          <div className="flex flex-col gap-1 border-b px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                            <strong className="min-w-0 truncate">
+                              {message.from_name || message.from_email}
+                            </strong>
+                            <time
+                              className="text-muted-foreground"
+                              dateTime={message.sent_at ?? message.received_at}
+                            >
+                              {format(
+                                new Date(
+                                  message.sent_at ?? message.received_at,
+                                ),
+                                "PPp",
+                              )}
+                            </time>
+                          </div>
+                        )}
+                        <article
+                          className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden break-words p-4 leading-relaxed sm:p-7 [&_a]:break-all [&_img]:h-auto [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto ${
+                            message.body_html ? "" : "whitespace-pre-wrap"
+                          }`}
+                          dangerouslySetInnerHTML={{
+                            __html: sanitizeHtml(
+                              message.body_html ||
+                                message.body_text ||
+                                message.snippet ||
+                                "",
+                              inlineAttachmentUrls,
+                            ),
+                          }}
+                        />
+                      </section>
+                    ))}
+                  </div>
                 </div>
                 <ReplyBox
                   key={selected.id}
@@ -1360,12 +1681,55 @@ function InboxPage() {
   );
 }
 
-function sanitizeHtml(html: string): string {
-  // basic: strip scripts and on* attrs; full sanitization handled in client display only
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+="[^"]*"/gi, "")
-    .replace(/\son\w+='[^']*'/gi, "");
+function sanitizeHtml(
+  html: string,
+  inlineAttachmentUrls: Record<string, string>,
+): string {
+  if (typeof DOMParser === "undefined") {
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/\son\w+="[^"]*"/gi, "")
+      .replace(/\son\w+='[^']*'/gi, "");
+  }
+
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document
+    .querySelectorAll(
+      "script, iframe, object, embed, form, input, button, base, meta, link",
+    )
+    .forEach((element) => element.remove());
+  document.querySelectorAll("*").forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+      if (name.startsWith("on") || name === "srcdoc") {
+        element.removeAttribute(attribute.name);
+      }
+      if (
+        (name === "href" || name === "src" || name === "xlink:href") &&
+        /^(javascript|vbscript|data:text\/html)/i.test(value)
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+  document.querySelectorAll("img").forEach((image) => {
+    const src = image.getAttribute("src") ?? "";
+    if (src.toLowerCase().startsWith("cid:")) {
+      const contentId = src.slice(4).replace(/^<|>$/g, "");
+      const secureUrl = inlineAttachmentUrls[contentId];
+      if (secureUrl) image.setAttribute("src", secureUrl);
+      else image.removeAttribute("src");
+    }
+    image.removeAttribute("srcset");
+    image.style.maxWidth = "100%";
+    image.style.height = "auto";
+  });
+  document.querySelectorAll("a").forEach((anchor) => {
+    anchor.setAttribute("target", "_blank");
+    anchor.setAttribute("rel", "noopener noreferrer");
+  });
+  return document.body.innerHTML;
 }
 
 function EmailAttachments({
@@ -1493,22 +1857,6 @@ function formatAttachmentSize(size: number) {
   return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
-function base64ToBlob(base64: string, mimeType: string) {
-  const binary = window.atob(base64);
-  const chunks: BlobPart[] = [];
-  for (let offset = 0; offset < binary.length; offset += 1024) {
-    const slice = binary.slice(offset, offset + 1024);
-    const bytes = new Uint8Array(slice.length);
-    for (let index = 0; index < slice.length; index++) {
-      bytes[index] = slice.charCodeAt(index);
-    }
-    chunks.push(bytes);
-  }
-  return new Blob(chunks, {
-    type: mimeType || "application/octet-stream",
-  });
-}
-
 function createPrintDocument(url: string, filename: string) {
   const safeUrl = escapeHtml(url);
   const safeFilename = escapeHtml(filename);
@@ -1537,6 +1885,58 @@ function createPrintDocument(url: string, filename: string) {
       });
     </script>
   </body>
+</html>`;
+}
+
+function createImagePrintDocument(url: string, filename: string) {
+  const safeUrl = escapeHtml(url);
+  const safeFilename = escapeHtml(filename);
+  return `<!doctype html>
+<html>
+  <head>
+    <title>${safeFilename}</title>
+    <style>
+      body { margin: 0; padding: 24px; text-align: center; }
+      img { height: auto; max-width: 100%; }
+    </style>
+  </head>
+  <body>
+    <img alt="${safeFilename}" src="${safeUrl}" />
+    <script>
+      const image = document.querySelector("img");
+      image.addEventListener("load", () => {
+        window.focus();
+        window.print();
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function createTextDocument(
+  content: string,
+  filename: string,
+  isHtml: boolean,
+  printAfterLoad: boolean,
+) {
+  const safeFilename = escapeHtml(filename);
+  return `<!doctype html>
+<html>
+  <head>
+    <title>${safeFilename}</title>
+    <style>
+      body { color: #111827; font: 14px/1.6 system-ui, sans-serif; margin: 0 auto; max-width: 900px; padding: 32px; }
+      pre { overflow-wrap: anywhere; white-space: pre-wrap; }
+      img { height: auto; max-width: 100%; }
+      table { display: block; max-width: 100%; overflow-x: auto; }
+    </style>
+  </head>
+  <body>${isHtml ? content : `<pre>${content}</pre>`}</body>
+  ${
+    printAfterLoad
+      ? "<script>window.addEventListener('load', () => { window.focus(); window.print(); });</script>"
+      : ""
+  }
 </html>`;
 }
 
@@ -1578,6 +1978,7 @@ function ReplyBox({ email, accountId }: { email: Email; accountId?: string }) {
       toast.success("Reply sent");
       setBody("");
       qc.invalidateQueries({ queryKey: ["emails"] });
+      qc.invalidateQueries({ queryKey: ["email-thread"] });
       qc.invalidateQueries({ queryKey: ["email-folder-counts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["sidebar-counters"] });
