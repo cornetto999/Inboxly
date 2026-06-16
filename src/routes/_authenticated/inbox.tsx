@@ -327,6 +327,25 @@ function formatFolderCount(count: number) {
   return new Intl.NumberFormat().format(count);
 }
 
+function getValidDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatEmailTimestamp(
+  value: string | null | undefined,
+  pattern: string,
+  fallback: string,
+) {
+  const date = getValidDate(value);
+  return date ? format(date, pattern) : fallback;
+}
+
+function getDateTimeAttribute(value: string | null | undefined) {
+  return getValidDate(value) ? value : undefined;
+}
+
 type EmailQuerySnapshot = [readonly unknown[], Email[] | undefined];
 
 function emailMatchesStatus(email: Email, status: unknown) {
@@ -526,6 +545,27 @@ function InboxPage() {
         queryKey,
         rows
           .map((row) => (row.id === id ? { ...row, ...patch } : row))
+          .filter((row) => emailMatchesStatus(row, queryStatus)),
+      );
+    }
+    return snapshots as EmailQuerySnapshot[];
+  };
+
+  const patchCachedEmails = (
+    ids: string[],
+    getPatch: (email: Email) => Partial<Email>,
+  ) => {
+    const snapshots = qc.getQueriesData<Email[]>({ queryKey: ["emails"] });
+    const idsToPatch = new Set(ids);
+    for (const [queryKey, rows] of snapshots) {
+      if (!rows) continue;
+      const queryStatus = queryKey[3];
+      qc.setQueryData<Email[]>(
+        queryKey,
+        rows
+          .map((row) =>
+            idsToPatch.has(row.id) ? { ...row, ...getPatch(row) } : row,
+          )
           .filter((row) => emailMatchesStatus(row, queryStatus)),
       );
     }
@@ -767,6 +807,9 @@ function InboxPage() {
       mkBulk({ data: { ids: selectedIds, action } }),
     onMutate: (action) => {
       const previousCounts = applyOptimisticBulkAction(action);
+      const previousEmailCaches = patchCachedEmails(selectedIds, (email) =>
+        getBulkEmailPatch(email, action),
+      );
       const previousSelected = selected;
       const selectedIdSet = new Set(selectedIds);
       setSelected((email) => {
@@ -774,13 +817,14 @@ function InboxPage() {
         if (action === "archive" || action === "trash") return null;
         return { ...email, ...getBulkEmailPatch(email, action) };
       });
-      return { previousCounts, previousSelected };
+      return { previousCounts, previousEmailCaches, previousSelected };
     },
     onSuccess: () => {
       setSelectedIds([]);
     },
     onError: (error: Error, _action, context) => {
       restoreFolderCounts(context?.previousCounts);
+      restoreEmailCaches(context?.previousEmailCaches);
       if (context && "previousSelected" in context) {
         setSelected(context.previousSelected ?? null);
       }
@@ -1251,13 +1295,25 @@ function InboxPage() {
                         </button>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        <time dateTime={email.received_at}>
-                          {format(new Date(email.received_at), "MMM d, yyyy")}
+                        <time
+                          dateTime={getDateTimeAttribute(email.received_at)}
+                        >
+                          {formatEmailTimestamp(
+                            email.received_at,
+                            "MMM d, yyyy",
+                            "Unknown date",
+                          )}
                         </time>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        <time dateTime={email.received_at}>
-                          {format(new Date(email.received_at), "h:mm a")}
+                        <time
+                          dateTime={getDateTimeAttribute(email.received_at)}
+                        >
+                          {formatEmailTimestamp(
+                            email.received_at,
+                            "h:mm a",
+                            "Unknown time",
+                          )}
                         </time>
                       </TableCell>
                       <TableCell>
@@ -1392,11 +1448,19 @@ function InboxPage() {
                       <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1.5">
                           <CalendarDays className="h-3.5 w-3.5" />
-                          {format(new Date(email.received_at), "MMM d, yyyy")}
+                          {formatEmailTimestamp(
+                            email.received_at,
+                            "MMM d, yyyy",
+                            "Unknown date",
+                          )}
                         </span>
                         <span className="flex items-center gap-1.5">
                           <Clock3 className="h-3.5 w-3.5" />
-                          {format(new Date(email.received_at), "h:mm a")}
+                          {formatEmailTimestamp(
+                            email.received_at,
+                            "h:mm a",
+                            "Unknown time",
+                          )}
                         </span>
                       </div>
                     </button>
@@ -1456,7 +1520,13 @@ function InboxPage() {
                 </DialogTitle>
                 <DialogDescription className="sr-only">
                   Email from {selected.from_name || selected.from_email},
-                  received {format(new Date(selected.received_at), "PPpp")}.
+                  received{" "}
+                  {formatEmailTimestamp(
+                    selected.received_at,
+                    "PPpp",
+                    "unknown date",
+                  )}
+                  .
                 </DialogDescription>
                 <div className="flex flex-col gap-4 pt-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
@@ -1479,11 +1549,19 @@ function InboxPage() {
                   <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground sm:shrink-0">
                     <span className="flex items-center gap-1.5">
                       <CalendarDays className="h-3.5 w-3.5" />
-                      {format(new Date(selected.received_at), "MMM d, yyyy")}
+                      {formatEmailTimestamp(
+                        selected.received_at,
+                        "MMM d, yyyy",
+                        "Unknown date",
+                      )}
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Clock3 className="h-3.5 w-3.5" />
-                      {format(new Date(selected.received_at), "h:mm a")}
+                      {formatEmailTimestamp(
+                        selected.received_at,
+                        "h:mm a",
+                        "Unknown time",
+                      )}
                     </span>
                   </div>
                 </div>
@@ -1641,13 +1719,14 @@ function InboxPage() {
                             </strong>
                             <time
                               className="text-muted-foreground"
-                              dateTime={message.sent_at ?? message.received_at}
+                              dateTime={getDateTimeAttribute(
+                                message.sent_at ?? message.received_at,
+                              )}
                             >
-                              {format(
-                                new Date(
-                                  message.sent_at ?? message.received_at,
-                                ),
+                              {formatEmailTimestamp(
+                                message.sent_at ?? message.received_at,
                                 "PPp",
+                                "Unknown date",
                               )}
                             </time>
                           </div>

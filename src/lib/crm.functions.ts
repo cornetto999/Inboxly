@@ -1854,24 +1854,30 @@ export const markEmailRead = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), isRead: z.boolean() }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    const { email } = await modifyGmailLabels({
-      context,
-      emailId: data.id,
-      addLabelIds: data.isRead ? [] : ["UNREAD"],
-      removeLabelIds: data.isRead ? ["UNREAD"] : [],
-    });
+    const { email } = await getEmailAndAccount(context, data.id);
+    const addLabelIds = data.isRead ? [] : ["UNREAD"];
+    const removeLabelIds = data.isRead ? ["UNREAD"] : [];
     const { error } = await context.supabase
       .from("emails")
       .update({
         is_read: data.isRead,
-        labels: updateLocalLabels(
-          email.labels,
-          data.isRead ? [] : ["UNREAD"],
-          data.isRead ? ["UNREAD"] : [],
-        ),
+        labels: updateLocalLabels(email.labels, addLabelIds, removeLabelIds),
       })
       .eq("id", data.id);
     if (error) throw toSupabaseError(error, "public.emails");
+    try {
+      await modifyGmailLabels({
+        context,
+        emailId: data.id,
+        addLabelIds,
+        removeLabelIds,
+      });
+    } catch (gmailError) {
+      console.warn(
+        "Gmail read label sync failed after local update.",
+        gmailError,
+      );
+    }
     await context.supabase.from("activity_logs").insert({
       actor_id: context.userId,
       entity_type: "email",
@@ -1986,11 +1992,7 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     for (const id of data.ids) {
       if (data.action === "mark_read") {
-        const { email } = await modifyGmailLabels({
-          context,
-          emailId: id,
-          removeLabelIds: ["UNREAD"],
-        });
+        const { email } = await getEmailAndAccount(context, id);
         const { error } = await context.supabase
           .from("emails")
           .update({
@@ -1999,13 +2001,21 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
           })
           .eq("id", id);
         if (error) throw toSupabaseError(error, "public.emails");
+        try {
+          await modifyGmailLabels({
+            context,
+            emailId: id,
+            removeLabelIds: ["UNREAD"],
+          });
+        } catch (gmailError) {
+          console.warn(
+            "Gmail bulk read label sync failed after local update.",
+            gmailError,
+          );
+        }
       }
       if (data.action === "mark_unread") {
-        const { email } = await modifyGmailLabels({
-          context,
-          emailId: id,
-          addLabelIds: ["UNREAD"],
-        });
+        const { email } = await getEmailAndAccount(context, id);
         const { error } = await context.supabase
           .from("emails")
           .update({
@@ -2014,6 +2024,18 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
           })
           .eq("id", id);
         if (error) throw toSupabaseError(error, "public.emails");
+        try {
+          await modifyGmailLabels({
+            context,
+            emailId: id,
+            addLabelIds: ["UNREAD"],
+          });
+        } catch (gmailError) {
+          console.warn(
+            "Gmail bulk unread label sync failed after local update.",
+            gmailError,
+          );
+        }
       }
       if (data.action === "archive") {
         const { email } = await modifyGmailLabels({
