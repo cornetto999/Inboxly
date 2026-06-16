@@ -346,6 +346,26 @@ function getDateTimeAttribute(value: string | null | undefined) {
   return getValidDate(value) ? value : undefined;
 }
 
+function getSenderName(email: Partial<Email>) {
+  return email.from_name || email.from_email || "Unknown sender";
+}
+
+function getSenderEmail(email: Partial<Email>) {
+  return email.from_email || "Unknown email";
+}
+
+function getInitial(value: string) {
+  return value.slice(0, 1).toUpperCase() || "?";
+}
+
+function getEmailAddresses(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (address): address is string =>
+      typeof address === "string" && address.trim().length > 0,
+  );
+}
+
 type EmailQuerySnapshot = [readonly unknown[], Email[] | undefined];
 
 function emailMatchesStatus(email: Email, status: unknown) {
@@ -1242,7 +1262,7 @@ function InboxPage() {
                                 : ids.filter((id) => id !== email.id),
                             )
                           }
-                          aria-label={`Select ${email.subject || email.from_email}`}
+                          aria-label={`Select ${email.subject || getSenderName(email)}`}
                         />
                       </TableCell>
                       <TableCell>
@@ -1258,9 +1278,7 @@ function InboxPage() {
                                   : "bg-muted text-muted-foreground"
                               }`}
                             >
-                              {(email.from_name || email.from_email)
-                                .slice(0, 1)
-                                .toUpperCase()}
+                              {getInitial(getSenderName(email))}
                             </AvatarFallback>
                           </Avatar>
                           <span className="min-w-0">
@@ -1269,10 +1287,10 @@ function InboxPage() {
                                 !email.is_read ? "font-semibold" : "font-medium"
                               }`}
                             >
-                              {email.from_name || email.from_email}
+                              {getSenderName(email)}
                             </span>
                             <span className="block max-w-40 truncate text-xs text-muted-foreground">
-                              {email.from_email}
+                              {getSenderEmail(email)}
                             </span>
                           </span>
                         </button>
@@ -1417,7 +1435,7 @@ function InboxPage() {
                             : ids.filter((id) => id !== email.id),
                         )
                       }
-                      aria-label={`Select ${email.subject || email.from_email}`}
+                      aria-label={`Select ${email.subject || getSenderName(email)}`}
                     />
                     <button
                       className="min-w-0 flex-1 text-left"
@@ -1429,7 +1447,7 @@ function InboxPage() {
                             !email.is_read ? "font-semibold" : "font-medium"
                           }`}
                         >
-                          {email.from_name || email.from_email}
+                          {getSenderName(email)}
                         </span>
                         {!email.is_read && (
                           <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
@@ -1519,8 +1537,7 @@ function InboxPage() {
                   {selected.subject || "(no subject)"}
                 </DialogTitle>
                 <DialogDescription className="sr-only">
-                  Email from {selected.from_name || selected.from_email},
-                  received{" "}
+                  Email from {getSenderName(selected)}, received{" "}
                   {formatEmailTimestamp(
                     selected.received_at,
                     "PPpp",
@@ -1532,17 +1549,15 @@ function InboxPage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <Avatar className="h-11 w-11">
                       <AvatarFallback className="bg-primary/10 font-semibold text-primary">
-                        {(selected.from_name || selected.from_email)
-                          .slice(0, 1)
-                          .toUpperCase()}
+                        {getInitial(getSenderName(selected))}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-foreground">
-                        {selected.from_name || selected.from_email}
+                        {getSenderName(selected)}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {selected.from_email}
+                        {getSenderEmail(selected)}
                       </p>
                     </div>
                   </div>
@@ -1684,14 +1699,14 @@ function InboxPage() {
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">To:</span>
                     <span className="break-all">
-                      {selected.to_emails.join(", ") || "Me"}
+                      {getEmailAddresses(selected.to_emails).join(", ") || "Me"}
                     </span>
-                    {selected.cc_emails.length > 0 && (
+                    {getEmailAddresses(selected.cc_emails).length > 0 && (
                       <>
                         <span className="mx-1 text-border">|</span>
                         <span className="font-medium text-foreground">Cc:</span>
                         <span className="break-all">
-                          {selected.cc_emails.join(", ")}
+                          {getEmailAddresses(selected.cc_emails).join(", ")}
                         </span>
                       </>
                     )}
@@ -1715,7 +1730,7 @@ function InboxPage() {
                         {threadMessages.length > 1 && (
                           <div className="flex flex-col gap-1 border-b px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-6">
                             <strong className="min-w-0 truncate">
-                              {message.from_name || message.from_email}
+                              {getSenderName(message)}
                             </strong>
                             <time
                               className="text-muted-foreground"
@@ -2082,7 +2097,7 @@ function ReplyBox({ email, accountId }: { email: Email; accountId?: string }) {
           <div>
             <h3 className="flex items-center gap-2 text-sm font-semibold">
               <Reply className="h-4 w-4 text-primary" />
-              Reply to {email.from_name || email.from_email}
+              Reply to {getSenderName(email)}
             </h3>
             <p className="mt-1 text-xs text-muted-foreground">
               Send a Gmail reply from this workspace.

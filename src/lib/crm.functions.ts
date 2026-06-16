@@ -1328,7 +1328,7 @@ export const syncGmail = createServerFn({ method: "POST" })
 
         const { data: existing, error: existingError } = await context.supabase
           .from("emails")
-          .select("id")
+          .select("id, is_read, labels")
           .eq("account_id", account.id)
           .eq("gmail_message_id", mid)
           .maybeSingle();
@@ -1338,9 +1338,19 @@ export const syncGmail = createServerFn({ method: "POST" })
 
         let emailId: string;
         if (existing) {
+          const localIsRead = existing.is_read ?? statusFields.is_read;
+          const syncedEmailFields = {
+            ...enhancedEmailFields,
+            is_read: localIsRead,
+            labels: updateLocalLabels(
+              labelIds,
+              localIsRead ? [] : ["UNREAD"],
+              localIsRead ? ["UNREAD"] : [],
+            ),
+          };
           const { error: updateError } = await context.supabase
             .from("emails")
-            .update(enhancedEmailFields)
+            .update(syncedEmailFields)
             .eq("id", existing.id);
           if (updateError) {
             throw toSupabaseError(updateError, "public.emails");
