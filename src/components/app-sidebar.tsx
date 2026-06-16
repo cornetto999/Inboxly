@@ -179,23 +179,43 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                       tooltip={item.title}
                       className="h-10 rounded-lg px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-primary data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary-foreground data-[active=true]:shadow-sm"
                     >
-                      <Link to={item.url}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                        {!collapsed && counterKey && (
-                          <span
-                            className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
-                            title={
-                              counterValue === null
-                                ? `${item.title} is unavailable until the database migration is applied`
-                                : `${counterText} ${counterDescription}`
-                            }
-                            aria-label={`${counterText} ${counterDescription}`}
-                          >
-                            {counterText}
-                          </span>
-                        )}
-                      </Link>
+                      {item.url === "/inbox" ? (
+                        <Link to="/inbox" search={{ status: "all" }}>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                          {!collapsed && counterKey && (
+                            <span
+                              className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
+                              title={
+                                counterValue === null
+                                  ? `${item.title} is unavailable until the database migration is applied`
+                                  : `${counterText} ${counterDescription}`
+                              }
+                              aria-label={`${counterText} ${counterDescription}`}
+                            >
+                              {counterText}
+                            </span>
+                          )}
+                        </Link>
+                      ) : (
+                        <Link to={item.url}>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                          {!collapsed && counterKey && (
+                            <span
+                              className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
+                              title={
+                                counterValue === null
+                                  ? `${item.title} is unavailable until the database migration is applied`
+                                  : `${counterText} ${counterDescription}`
+                              }
+                              aria-label={`${counterText} ${counterDescription}`}
+                            >
+                              {counterText}
+                            </span>
+                          )}
+                        </Link>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

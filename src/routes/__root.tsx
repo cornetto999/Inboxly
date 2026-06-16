@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -129,9 +129,14 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (pathname === "/auth/callback") return;
@@ -162,10 +167,32 @@ function RootComponent() {
     return () => sub.subscription.unsubscribe();
   }, [router, queryClient]);
 
+  const shouldWaitForClientAuth = isClientAuthRoute(pathname);
+
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      {!shouldWaitForClientAuth || mounted ? <Outlet /> : null}
       <Toaster richColors position="top-right" />
     </QueryClientProvider>
+  );
+}
+
+function isClientAuthRoute(pathname: string) {
+  return (
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/campaigns") ||
+    pathname.startsWith("/contacts") ||
+    pathname.startsWith("/customers") ||
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/inbox") ||
+    pathname.startsWith("/leads") ||
+    pathname.startsWith("/reminders") ||
+    pathname.startsWith("/reports") ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/tasks") ||
+    pathname.startsWith("/team") ||
+    pathname.startsWith("/templates")
   );
 }

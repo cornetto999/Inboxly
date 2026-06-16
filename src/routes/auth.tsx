@@ -22,15 +22,20 @@ import { Inbox, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
-  ssr: false,
   head: () => ({ meta: [{ title: "Sign in — Inboxly" }] }),
   component: AuthRoutePage,
 });
 
 function AuthRoutePage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (pathname !== "/auth") return <Outlet />;
+  if (!mounted) return null;
 
   return <AuthPage />;
 }
