@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   listEmails,
   listEmailAccounts,
@@ -112,22 +112,23 @@ const EMAIL_STATUS_META: Record<
   all: {
     label: "All Mail",
     countKey: "all",
-    description: "All synced Gmail messages, including Spam and Trash.",
+    description: "Synced Gmail messages excluding Spam and Trash.",
   },
   unread: {
     label: "Unread",
     countKey: "unread",
-    description: "Messages with the Gmail UNREAD label.",
+    description: "Inbox mail with the Gmail UNREAD label.",
   },
   read: {
     label: "Read",
     countKey: "read",
-    description: "Read messages excluding Spam, Trash, and Drafts.",
+    description: "Read mail excluding Sent, Drafts, Spam, and Trash.",
   },
   starred: {
     label: "Starred",
     countKey: "starred",
-    description: "Messages with the Gmail STARRED label.",
+    description:
+      "Messages with the Gmail STARRED label outside Spam and Trash.",
   },
   replied: {
     label: "Replied",
@@ -186,6 +187,8 @@ type BulkAction =
   | "star"
   | "unstar";
 
+const EMPTY_ATTACHMENTS: EmailAttachment[] = [];
+
 const EMAIL_COUNT_KEYS = [
   "all",
   "unread",
@@ -200,7 +203,12 @@ const EMAIL_COUNT_KEYS = [
 ] as const satisfies readonly (keyof EmailFolderCounts)[];
 
 function getEmailLabels(email: Partial<Email>) {
-  const labels = "labels" in email ? email.labels : [];
+  const labelIds = "label_ids" in email ? email.label_ids : undefined;
+  const labels = Array.isArray(labelIds)
+    ? labelIds
+    : "labels" in email
+      ? email.labels
+      : [];
   if (!Array.isArray(labels)) return [];
   return labels.filter((label): label is string => typeof label === "string");
 }
@@ -220,38 +228,123 @@ function updateEmailLabels(
   return Array.from(nextLabels);
 }
 
-function getEmailContribution(email: Partial<Email>): EmailFolderCounts {
+function getEmailLabelPatch(
+  email: Partial<Email>,
+  addLabelIds: string[] = [],
+  removeLabelIds: string[] = [],
+): Partial<Email> {
+  const labels = updateEmailLabels(
+    getEmailLabels(email),
+    addLabelIds,
+    removeLabelIds,
+  );
+  const upperLabels = labels.map((label) => label.toUpperCase());
+  const hasLabel = (label: string) => upperLabels.includes(label);
+  const isSent = hasLabel("SENT");
+  const isDraft = hasLabel("DRAFT");
+  const isSpam = hasLabel("SPAM");
+  const isTrashed = hasLabel("TRASH");
+
+  return {
+    labels,
+    label_ids: labels,
+    is_read: !hasLabel("UNREAD"),
+    is_starred: hasLabel("STARRED"),
+    is_sent: isSent,
+    is_draft: isDraft,
+    is_spam: isSpam,
+    is_trashed: isTrashed,
+    is_archived:
+      !hasLabel("INBOX") && !isSent && !isDraft && !isSpam && !isTrashed,
+  };
+}
+
+function getEmailFolderState(email: Partial<Email>) {
   const labels = getEmailLabels(email).map((label) => label.toUpperCase());
-  const hasLabels = labels.length > 0;
+  const hasSyncedLabels = labels.length > 0;
   const hasLabel = (label: string) => labels.includes(label);
-  const isRead = Boolean(email.is_read);
-  const isSent = Boolean(email.is_sent) || hasLabel("SENT");
-  const isDraft = Boolean(email.is_draft) || hasLabel("DRAFT");
-  const isSpam = Boolean(email.is_spam) || hasLabel("SPAM");
-  const isTrashed = Boolean(email.is_trashed) || hasLabel("TRASH");
+  const isSent =
+    hasLabel("SENT") || (!hasSyncedLabels && Boolean(email.is_sent));
+  const isDraft =
+    hasLabel("DRAFT") || (!hasSyncedLabels && Boolean(email.is_draft));
+  const isSpam =
+    hasLabel("SPAM") || (!hasSyncedLabels && Boolean(email.is_spam));
+  const isTrashed =
+    hasLabel("TRASH") || (!hasSyncedLabels && Boolean(email.is_trashed));
+  const hasUnread =
+    hasLabel("UNREAD") || (!hasSyncedLabels && email.is_read === false);
+  const isReadLabel = hasSyncedLabels
+    ? !hasLabel("UNREAD")
+    : email.is_read === true;
+  const isArchivedByLabels =
+    hasSyncedLabels &&
+    !hasLabel("INBOX") &&
+    !hasLabel("SENT") &&
+    !hasLabel("DRAFT") &&
+    !hasLabel("SPAM") &&
+    !hasLabel("TRASH");
   const isArchived =
-    (Boolean(email.is_archived) ||
-      (hasLabels &&
-        !hasLabel("INBOX") &&
-        !hasLabel("SENT") &&
-        !hasLabel("DRAFT") &&
-        !hasLabel("SPAM") &&
-        !hasLabel("TRASH"))) &&
+    (isArchivedByLabels || (!hasSyncedLabels && Boolean(email.is_archived))) &&
     !isSent &&
     !isDraft &&
     !isSpam &&
     !isTrashed;
 
   return {
-    all: 1,
-    unread: isRead ? 0 : 1,
-    read: isRead && !isSpam && !isTrashed && !isDraft ? 1 : 0,
-    starred: Boolean(email.is_starred) || hasLabel("STARRED") ? 1 : 0,
-    sent: isSent ? 1 : 0,
-    drafts: isDraft ? 1 : 0,
-    archived: isArchived ? 1 : 0,
-    spam: isSpam ? 1 : 0,
-    trash: isTrashed ? 1 : 0,
+    isAllMail: !isSpam && !isTrashed,
+    isUnread: hasUnread && !isSent && !isDraft && !isSpam && !isTrashed,
+    isRead: isReadLabel && !isSent && !isDraft && !isSpam && !isTrashed,
+    isStarred:
+      (hasLabel("STARRED") ||
+        (!hasSyncedLabels && Boolean(email.is_starred))) &&
+      !isSpam &&
+      !isTrashed,
+    isReplied:
+      Boolean(email.has_replied) &&
+      !isSent &&
+      !isDraft &&
+      !isSpam &&
+      !isTrashed,
+    isSent,
+    isDraft: isDraft && !isTrashed,
+    isArchived,
+    isSpam,
+    isTrashed,
+  };
+}
+
+function areStringRecordsEqual(
+  left: Record<string, string>,
+  right: Record<string, string>,
+) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function isEmailUnread(email: Partial<Email>) {
+  return getEmailFolderState(email).isUnread;
+}
+
+function isEmailRead(email: Partial<Email>) {
+  return getEmailFolderState(email).isRead;
+}
+
+function getEmailContribution(email: Partial<Email>): EmailFolderCounts {
+  const state = getEmailFolderState(email);
+
+  return {
+    all: state.isAllMail ? 1 : 0,
+    unread: state.isUnread ? 1 : 0,
+    read: state.isRead ? 1 : 0,
+    starred: state.isStarred ? 1 : 0,
+    replied: state.isReplied ? 1 : 0,
+    sent: state.isSent && !state.isTrashed ? 1 : 0,
+    drafts: state.isDraft ? 1 : 0,
+    archived: state.isArchived ? 1 : 0,
+    spam: state.isSpam ? 1 : 0,
+    trash: state.isTrashed ? 1 : 0,
   };
 }
 
@@ -284,43 +377,21 @@ function applyEmailCountDelta(
 
 function getBulkEmailPatch(email: Email, action: BulkAction): Partial<Email> {
   if (action === "mark_read") {
-    return {
-      is_read: true,
-      labels: updateEmailLabels(email.labels, [], ["UNREAD"]),
-    };
+    return getEmailLabelPatch(email, [], ["UNREAD"]);
   }
   if (action === "mark_unread") {
-    return {
-      is_read: false,
-      labels: updateEmailLabels(email.labels, ["UNREAD"]),
-    };
+    return getEmailLabelPatch(email, ["UNREAD"]);
   }
   if (action === "archive") {
-    return {
-      is_archived: true,
-      is_spam: false,
-      is_trashed: false,
-      labels: updateEmailLabels(email.labels, [], ["INBOX", "SPAM", "TRASH"]),
-    };
+    return getEmailLabelPatch(email, [], ["INBOX", "SPAM", "TRASH"]);
   }
   if (action === "trash") {
-    return {
-      is_archived: false,
-      is_spam: false,
-      is_trashed: true,
-      labels: updateEmailLabels(email.labels, ["TRASH"], ["INBOX"]),
-    };
+    return getEmailLabelPatch(email, ["TRASH"], ["INBOX"]);
   }
   if (action === "star") {
-    return {
-      is_starred: true,
-      labels: updateEmailLabels(email.labels, ["STARRED"]),
-    };
+    return getEmailLabelPatch(email, ["STARRED"]);
   }
-  return {
-    is_starred: false,
-    labels: updateEmailLabels(email.labels, [], ["STARRED"]),
-  };
+  return getEmailLabelPatch(email, [], ["STARRED"]);
 }
 
 function formatFolderCount(count: number) {
@@ -369,27 +440,17 @@ function getEmailAddresses(value: unknown) {
 type EmailQuerySnapshot = [readonly unknown[], Email[] | undefined];
 
 function emailMatchesStatus(email: Email, status: unknown) {
-  if (status === "unread") return !email.is_read;
-  if (status === "read") {
-    return (
-      email.is_read && !email.is_spam && !email.is_trashed && !email.is_draft
-    );
-  }
-  if (status === "starred") return email.is_starred;
-  if (status === "sent") return email.is_sent;
-  if (status === "drafts") return email.is_draft;
-  if (status === "archived") {
-    return (
-      email.is_archived &&
-      !email.is_sent &&
-      !email.is_draft &&
-      !email.is_spam &&
-      !email.is_trashed
-    );
-  }
-  if (status === "spam") return email.is_spam;
-  if (status === "trash") return email.is_trashed;
-  return true;
+  const state = getEmailFolderState(email);
+  if (status === "unread") return state.isUnread;
+  if (status === "read") return state.isRead;
+  if (status === "starred") return state.isStarred;
+  if (status === "replied") return state.isReplied;
+  if (status === "sent") return state.isSent && !state.isTrashed;
+  if (status === "drafts") return state.isDraft;
+  if (status === "archived") return state.isArchived;
+  if (status === "spam") return state.isSpam;
+  if (status === "trash") return state.isTrashed;
+  return state.isAllMail;
 }
 
 async function fetchAttachmentResponse(
@@ -476,6 +537,8 @@ function InboxPage() {
   const [inlineAttachmentUrls, setInlineAttachmentUrls] = useState<
     Record<string, string>
   >({});
+  const selectedEmailId = selected?.id;
+  const readMutationLocks = useRef(new Set<string>());
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -487,19 +550,20 @@ function InboxPage() {
       listEm({ data: { search, status, fromDate: from || undefined } }),
   });
   const {
-    data: attachments = [],
+    data: fetchedAttachments,
     isLoading: attachmentsLoading,
     error: attachmentsError,
   } = useQuery({
-    queryKey: ["email-attachments", selected?.id],
-    queryFn: () => listAttachments({ data: { emailId: selected!.id } }),
-    enabled: !!selected,
+    queryKey: ["email-attachments", selectedEmailId],
+    queryFn: () => listAttachments({ data: { emailId: selectedEmailId! } }),
+    enabled: !!selectedEmailId,
     staleTime: 10 * 60 * 1000,
   });
+  const attachments = fetchedAttachments ?? EMPTY_ATTACHMENTS;
   const { data: threadMessages = [] } = useQuery({
-    queryKey: ["email-thread", selected?.id],
-    queryFn: () => listThread({ data: { emailId: selected!.id } }),
-    enabled: !!selected,
+    queryKey: ["email-thread", selectedEmailId],
+    queryFn: () => listThread({ data: { emailId: selectedEmailId! } }),
+    enabled: !!selectedEmailId,
   });
 
   useEffect(() => {
@@ -508,8 +572,10 @@ function InboxPage() {
     const inlineAttachments = attachments.filter(
       (attachment) => attachment.isInline && attachment.contentId,
     );
-    if (!selected || inlineAttachments.length === 0) {
-      setInlineAttachmentUrls({});
+    if (!selectedEmailId || inlineAttachments.length === 0) {
+      setInlineAttachmentUrls((current) =>
+        Object.keys(current).length === 0 ? current : {},
+      );
       return;
     }
 
@@ -522,12 +588,19 @@ function InboxPage() {
       }),
     )
       .then((entries) => {
-        if (active) setInlineAttachmentUrls(Object.fromEntries(entries));
+        if (active) {
+          const nextUrls = Object.fromEntries(entries);
+          setInlineAttachmentUrls((current) =>
+            areStringRecordsEqual(current, nextUrls) ? current : nextUrls,
+          );
+        }
       })
       .catch((error) => {
         if (active) {
           console.warn("Inline Gmail attachment failed to load.", error);
-          setInlineAttachmentUrls({});
+          setInlineAttachmentUrls((current) =>
+            Object.keys(current).length === 0 ? current : {},
+          );
         }
       });
 
@@ -535,12 +608,12 @@ function InboxPage() {
       active = false;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [attachments, selected]);
+  }, [attachments, selectedEmailId]);
 
   const emails = queriedEmails.filter((email) =>
     emailMatchesStatus(email, status),
   );
-  const unreadEmails = emails.filter((email) => !email.is_read);
+  const unreadEmails = emails.filter(isEmailUnread);
   const selectedIndex = selected
     ? unreadEmails.findIndex((email) => email.id === selected.id)
     : -1;
@@ -678,12 +751,13 @@ function InboxPage() {
   });
 
   const openEmail = async (e: Email) => {
-    const readPatch = {
-      is_read: true,
-      labels: updateEmailLabels(e.labels, [], ["UNREAD"]),
-    };
-    setSelected(e.is_read ? e : { ...e, ...readPatch });
-    if (!e.is_read) {
+    const readPatch = getEmailLabelPatch(e, [], ["UNREAD"]);
+    const wasUnread = isEmailUnread(e);
+    setSelected(wasUnread ? { ...e, ...readPatch } : e);
+    if (wasUnread) {
+      const readKey = e.gmail_message_id ?? e.id;
+      if (readMutationLocks.current.has(readKey)) return;
+      readMutationLocks.current.add(readKey);
       const previousCounts = applyOptimisticEmailPatch(e, readPatch);
       const previousEmailCaches = patchCachedEmail(e.id, readPatch);
       try {
@@ -696,6 +770,8 @@ function InboxPage() {
         toast.error(
           error instanceof Error ? error.message : "Could not mark email read.",
         );
+      } finally {
+        readMutationLocks.current.delete(readKey);
       }
     }
   };
@@ -706,18 +782,21 @@ function InboxPage() {
     onMutate: (variables) => {
       const email = getVisibleEmail(variables.id);
       if (!email) return {};
+      const readKey = email.gmail_message_id ?? email.id;
+      if (variables.isRead && readMutationLocks.current.has(readKey)) {
+        return { skipped: true };
+      }
+      if (variables.isRead) readMutationLocks.current.add(readKey);
       const previousCounts = applyOptimisticEmailPatch(email, {
-        is_read: variables.isRead,
-        labels: updateEmailLabels(
-          email.labels,
+        ...getEmailLabelPatch(
+          email,
           variables.isRead ? [] : ["UNREAD"],
           variables.isRead ? ["UNREAD"] : [],
         ),
       });
       const patch = {
-        is_read: variables.isRead,
-        labels: updateEmailLabels(
-          email.labels,
+        ...getEmailLabelPatch(
+          email,
           variables.isRead ? [] : ["UNREAD"],
           variables.isRead ? ["UNREAD"] : [],
         ),
@@ -727,9 +806,15 @@ function InboxPage() {
       setSelected((email) =>
         email?.id === variables.id ? { ...email, ...patch } : email,
       );
-      return { previousCounts, previousSelected, previousEmailCaches };
+      return {
+        previousCounts,
+        previousSelected,
+        previousEmailCaches,
+        readKey: variables.isRead ? readKey : undefined,
+      };
     },
     onError: (error: Error, _variables, context) => {
+      if (context && "skipped" in context) return;
       restoreFolderCounts(context?.previousCounts);
       restoreEmailCaches(context?.previousEmailCaches);
       if (context && "previousSelected" in context) {
@@ -737,7 +822,12 @@ function InboxPage() {
       }
       toast.error(error.message);
     },
-    onSettled: () => invalidateInbox(),
+    onSettled: (_data, _error, _variables, context) => {
+      if (context && "readKey" in context && context.readKey) {
+        readMutationLocks.current.delete(context.readKey);
+      }
+      if (!(context && "skipped" in context)) invalidateInbox();
+    },
   });
 
   const star = useMutation({
@@ -746,19 +836,15 @@ function InboxPage() {
     onMutate: (variables) => {
       const email = getVisibleEmail(variables.id);
       if (!email) return {};
-      const previousCounts = applyOptimisticEmailPatch(email, {
-        is_starred: variables.isStarred,
-        labels: updateEmailLabels(
-          email.labels,
-          variables.isStarred ? ["STARRED"] : [],
-          variables.isStarred ? [] : ["STARRED"],
-        ),
-      });
+      const patch = getEmailLabelPatch(
+        email,
+        variables.isStarred ? ["STARRED"] : [],
+        variables.isStarred ? [] : ["STARRED"],
+      );
+      const previousCounts = applyOptimisticEmailPatch(email, patch);
       const previousSelected = selected;
       setSelected((email) =>
-        email?.id === variables.id
-          ? { ...email, is_starred: variables.isStarred }
-          : email,
+        email?.id === variables.id ? { ...email, ...patch } : email,
       );
       return { previousCounts, previousSelected };
     },
@@ -777,12 +863,10 @@ function InboxPage() {
     onMutate: (id) => {
       const email = getVisibleEmail(id);
       if (!email) return {};
-      const previousCounts = applyOptimisticEmailPatch(email, {
-        is_archived: true,
-        is_spam: false,
-        is_trashed: false,
-        labels: updateEmailLabels(email.labels, [], ["INBOX", "SPAM", "TRASH"]),
-      });
+      const previousCounts = applyOptimisticEmailPatch(
+        email,
+        getEmailLabelPatch(email, [], ["INBOX", "SPAM", "TRASH"]),
+      );
       const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
       return { previousCounts, previousSelected };
@@ -802,12 +886,10 @@ function InboxPage() {
     onMutate: (id) => {
       const email = getVisibleEmail(id);
       if (!email) return {};
-      const previousCounts = applyOptimisticEmailPatch(email, {
-        is_archived: false,
-        is_spam: false,
-        is_trashed: true,
-        labels: updateEmailLabels(email.labels, ["TRASH"], ["INBOX"]),
-      });
+      const previousCounts = applyOptimisticEmailPatch(
+        email,
+        getEmailLabelPatch(email, ["TRASH"], ["INBOX"]),
+      );
       const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
       return { previousCounts, previousSelected };
@@ -1116,8 +1198,8 @@ function InboxPage() {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Counts come from synced Gmail labels in Supabase. All Mail includes
-            Spam and Trash until Gmail permanently deletes them.
+            Counts come from synced Gmail labels in Supabase. All Mail excludes
+            Spam and Trash.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
@@ -1250,7 +1332,9 @@ function InboxPage() {
                   {emails.map((email) => (
                     <TableRow
                       key={email.id}
-                      className={!email.is_read ? "bg-primary/[0.045]" : ""}
+                      className={
+                        isEmailUnread(email) ? "bg-primary/[0.045]" : ""
+                      }
                     >
                       <TableCell>
                         <Checkbox
@@ -1273,7 +1357,7 @@ function InboxPage() {
                           <Avatar className="h-9 w-9 rounded-lg">
                             <AvatarFallback
                               className={`rounded-lg text-xs font-semibold ${
-                                !email.is_read
+                                isEmailUnread(email)
                                   ? "bg-primary text-primary-foreground"
                                   : "bg-muted text-muted-foreground"
                               }`}
@@ -1284,7 +1368,9 @@ function InboxPage() {
                           <span className="min-w-0">
                             <span
                               className={`block max-w-40 truncate ${
-                                !email.is_read ? "font-semibold" : "font-medium"
+                                isEmailUnread(email)
+                                  ? "font-semibold"
+                                  : "font-medium"
                               }`}
                             >
                               {getSenderName(email)}
@@ -1302,7 +1388,9 @@ function InboxPage() {
                         >
                           <span
                             className={`block max-w-md truncate ${
-                              !email.is_read ? "font-semibold" : "font-medium"
+                              isEmailUnread(email)
+                                ? "font-semibold"
+                                : "font-medium"
                             }`}
                           >
                             {email.subject || "(no subject)"}
@@ -1335,7 +1423,7 @@ function InboxPage() {
                         </time>
                       </TableCell>
                       <TableCell>
-                        {!email.is_read ? (
+                        {isEmailUnread(email) ? (
                           <Badge
                             className="border-primary/20 bg-primary/10 text-primary"
                             variant="outline"
@@ -1375,18 +1463,20 @@ function InboxPage() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            title={email.is_read ? "Mark unread" : "Mark read"}
+                            title={
+                              isEmailRead(email) ? "Mark unread" : "Mark read"
+                            }
                             aria-label={
-                              email.is_read ? "Mark unread" : "Mark read"
+                              isEmailRead(email) ? "Mark unread" : "Mark read"
                             }
                             onClick={() =>
                               markRead.mutate({
                                 id: email.id,
-                                isRead: !email.is_read,
+                                isRead: !isEmailRead(email),
                               })
                             }
                           >
-                            {email.is_read ? (
+                            {isEmailRead(email) ? (
                               <Mail className="h-4 w-4" />
                             ) : (
                               <MailOpen className="h-4 w-4" />
@@ -1422,7 +1512,7 @@ function InboxPage() {
               {emails.map((email) => (
                 <div
                   key={email.id}
-                  className={`p-4 ${!email.is_read ? "bg-primary/[0.045]" : ""}`}
+                  className={`p-4 ${isEmailUnread(email) ? "bg-primary/[0.045]" : ""}`}
                 >
                   <div className="flex items-start gap-3">
                     <Checkbox
@@ -1444,18 +1534,20 @@ function InboxPage() {
                       <div className="flex items-start justify-between gap-3">
                         <span
                           className={`truncate text-sm ${
-                            !email.is_read ? "font-semibold" : "font-medium"
+                            isEmailUnread(email)
+                              ? "font-semibold"
+                              : "font-medium"
                           }`}
                         >
                           {getSenderName(email)}
                         </span>
-                        {!email.is_read && (
+                        {isEmailUnread(email) && (
                           <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
                         )}
                       </div>
                       <p
                         className={`mt-1 truncate text-sm ${
-                          !email.is_read ? "font-semibold" : ""
+                          isEmailUnread(email) ? "font-semibold" : ""
                         }`}
                       >
                         {email.subject || "(no subject)"}
@@ -1616,13 +1708,15 @@ function InboxPage() {
                     onClick={() =>
                       markRead.mutate({
                         id: selected.id,
-                        isRead: !selected.is_read,
+                        isRead: !isEmailRead(selected),
                       })
                     }
-                    title={selected.is_read ? "Mark unread" : "Mark read"}
-                    aria-label={selected.is_read ? "Mark unread" : "Mark read"}
+                    title={isEmailRead(selected) ? "Mark unread" : "Mark read"}
+                    aria-label={
+                      isEmailRead(selected) ? "Mark unread" : "Mark read"
+                    }
                   >
-                    {selected.is_read ? (
+                    {isEmailRead(selected) ? (
                       <Mail className="h-4 w-4" />
                     ) : (
                       <MailOpen className="h-4 w-4" />

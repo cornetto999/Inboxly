@@ -15,7 +15,7 @@ const TABLE_QUERY_KEYS: Record<string, readonly (readonly string[])[]> = {
   campaigns: [["campaigns"]],
   contacts: [["contacts"]],
   customers: [["customers"], ["customer"], ["contacts"]],
-  email_accounts: [["accounts"], ["emails"]],
+  email_accounts: [["accounts"], ["emails"], ["email-folder-counts"]],
   email_attachments: [["email-attachments"]],
   email_threads: [["emails"], ["email-folder-counts"]],
   email_templates: [["templates"]],
@@ -79,6 +79,8 @@ export function RealtimeQuerySync() {
         ["contacts"],
         ["templates"],
         ["accounts"],
+        ["email-folder-counts"],
+        ["sidebar-counters"],
       ]);
     };
     const handleVisibilityChange = () => {
