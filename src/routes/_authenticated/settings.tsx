@@ -75,9 +75,9 @@ function SettingsPage() {
     ? "connecting"
     : (primaryAccount?.connection_status ?? "disconnected");
   const reconnectRequired = connectionStatus === "reauthentication_required";
-  const connected =
-    connectionStatus === "connected" || connectionStatus === "sync_failed";
+  const connected = connectionStatus === "connected";
   const syncing = connectionStatus === "syncing";
+  const canStartConnection = !connected && !syncing && !connecting;
 
   const invalidateEmailData = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -243,11 +243,9 @@ function SettingsPage() {
             </div>
           </div>
           <Button
-            onClick={
-              !connected && !syncing && !connecting ? handleConnect : undefined
-            }
-            disabled={connected || syncing || connecting}
-            aria-disabled={connected || syncing || connecting}
+            onClick={canStartConnection ? handleConnect : undefined}
+            disabled={!canStartConnection}
+            aria-disabled={!canStartConnection}
             className={
               connected
                 ? "cursor-not-allowed hover:bg-primary hover:text-primary-foreground"
@@ -264,7 +262,7 @@ function SettingsPage() {
                 ? "Syncing..."
                 : connected
                   ? "Connected"
-                  : reconnectRequired
+                  : reconnectRequired || connectionStatus === "sync_failed"
                     ? "Reconnect Gmail"
                     : "Connect Gmail"}
           </Button>

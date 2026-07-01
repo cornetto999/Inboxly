@@ -99,35 +99,77 @@ export type Database = {
       };
       email_accounts: {
         Row: {
+          access_token_encrypted: string | null;
+          connected_at: string | null;
+          connection_status:
+            | "disconnected"
+            | "connecting"
+            | "connected"
+            | "syncing"
+            | "reauthentication_required"
+            | "sync_failed";
           connection_api_key: string;
           created_at: string;
           email_address: string;
           history_id: string | null;
           id: string;
+          last_sync_error: string | null;
           last_sync_at: string | null;
+          last_synced_at: string | null;
+          organization_id: string | null;
           provider: string;
+          refresh_token_encrypted: string | null;
+          token_expires_at: string | null;
           updated_at: string;
           user_id: string;
         };
         Insert: {
+          access_token_encrypted?: string | null;
+          connected_at?: string | null;
+          connection_status?:
+            | "disconnected"
+            | "connecting"
+            | "connected"
+            | "syncing"
+            | "reauthentication_required"
+            | "sync_failed";
           connection_api_key: string;
           created_at?: string;
           email_address: string;
           history_id?: string | null;
           id?: string;
+          last_sync_error?: string | null;
           last_sync_at?: string | null;
+          last_synced_at?: string | null;
+          organization_id?: string | null;
           provider?: string;
+          refresh_token_encrypted?: string | null;
+          token_expires_at?: string | null;
           updated_at?: string;
           user_id: string;
         };
         Update: {
+          access_token_encrypted?: string | null;
+          connected_at?: string | null;
+          connection_status?:
+            | "disconnected"
+            | "connecting"
+            | "connected"
+            | "syncing"
+            | "reauthentication_required"
+            | "sync_failed";
           connection_api_key?: string;
           created_at?: string;
           email_address?: string;
           history_id?: string | null;
           id?: string;
+          last_sync_error?: string | null;
           last_sync_at?: string | null;
+          last_synced_at?: string | null;
+          organization_id?: string | null;
           provider?: string;
+          refresh_token_encrypted?: string | null;
+          token_expires_at?: string | null;
           updated_at?: string;
           user_id?: string;
         };
@@ -176,8 +218,10 @@ export type Database = {
           customer_id: string | null;
           from_email: string;
           from_name: string | null;
+          gmail_history_id: string | null;
           gmail_message_id: string;
           gmail_thread_id: string | null;
+          has_attachments: boolean;
           has_replied: boolean;
           id: string;
           is_archived: boolean;
@@ -208,8 +252,10 @@ export type Database = {
           customer_id?: string | null;
           from_email: string;
           from_name?: string | null;
+          gmail_history_id?: string | null;
           gmail_message_id: string;
           gmail_thread_id?: string | null;
+          has_attachments?: boolean;
           has_replied?: boolean;
           id?: string;
           is_archived?: boolean;
@@ -240,8 +286,10 @@ export type Database = {
           customer_id?: string | null;
           from_email?: string;
           from_name?: string | null;
+          gmail_history_id?: string | null;
           gmail_message_id?: string;
           gmail_thread_id?: string | null;
+          has_attachments?: boolean;
           has_replied?: boolean;
           id?: string;
           is_archived?: boolean;

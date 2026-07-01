@@ -1,5 +1,9 @@
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   EMPTY_EMAIL_FOLDER_COUNTS,
@@ -45,7 +49,10 @@ export function useEmailFolderCounts(emailAccountId?: string) {
       getCounts({
         data: emailAccountId ? { accountId: emailAccountId } : {},
       }),
-    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    staleTime: 2 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
 
   const refreshCounts = useCallback(() => {
@@ -68,7 +75,7 @@ export function useEmailFolderCounts(emailAccountId?: string) {
 
   return {
     counts: normalizeEmailFolderCounts(query.data ?? EMPTY_EMAIL_FOLDER_COUNTS),
-    isLoading: query.isLoading,
+    isLoading: query.isPending && !query.data,
     error: query.error,
     refreshCounts,
     updateCountOptimistically,

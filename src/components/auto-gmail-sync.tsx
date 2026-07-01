@@ -42,6 +42,7 @@ export function AutoGmailSync() {
 
     syncing.current = true;
     let syncedAnyAccount = false;
+    let accountStateChanged = false;
     try {
       for (const account of staleAccounts) {
         try {
@@ -49,14 +50,14 @@ export function AutoGmailSync() {
           syncedAnyAccount = true;
         } catch (error) {
           const message = getErrorMessage(error);
-          if (
-            message.includes("Reconnect Gmail") &&
-            !reconnectNotices.current.has(account.id)
-          ) {
-            reconnectNotices.current.add(account.id);
-            toast.error(
-              "Reconnect Gmail once in Settings to enable automatic sync.",
-            );
+          if (message.includes("Reconnect Gmail")) {
+            accountStateChanged = true;
+            if (!reconnectNotices.current.has(account.id)) {
+              reconnectNotices.current.add(account.id);
+              toast.error(
+                "Reconnect Gmail once in Settings to enable automatic sync.",
+              );
+            }
           } else {
             console.warn("Automatic Gmail sync failed.", error);
           }
@@ -66,7 +67,7 @@ export function AutoGmailSync() {
       syncing.current = false;
     }
 
-    if (syncedAnyAccount) {
+    if (syncedAnyAccount || accountStateChanged) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["accounts"] }),
         queryClient.invalidateQueries({ queryKey: ["emails"] }),

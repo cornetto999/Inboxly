@@ -1,6 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   listEmails,
@@ -240,8 +245,6 @@ function getEmailLabelPatch(
   );
   const upperLabels = labels.map((label) => label.toUpperCase());
   const hasLabel = (label: string) => upperLabels.includes(label);
-  const isSent = hasLabel("SENT");
-  const isDraft = hasLabel("DRAFT");
   const isSpam = hasLabel("SPAM");
   const isTrashed = hasLabel("TRASH");
 
@@ -250,12 +253,11 @@ function getEmailLabelPatch(
     label_ids: labels,
     is_read: !hasLabel("UNREAD"),
     is_starred: hasLabel("STARRED"),
-    is_sent: isSent,
-    is_draft: isDraft,
+    is_sent: hasLabel("SENT"),
+    is_draft: hasLabel("DRAFT"),
     is_spam: isSpam,
     is_trashed: isTrashed,
-    is_archived:
-      !hasLabel("INBOX") && !isSent && !isDraft && !isSpam && !isTrashed,
+    is_archived: !hasLabel("INBOX") && !isSpam && !isTrashed,
   };
 }
 
@@ -263,6 +265,8 @@ function getEmailFolderState(email: Partial<Email>) {
   const labels = getEmailLabels(email).map((label) => label.toUpperCase());
   const hasSyncedLabels = labels.length > 0;
   const hasLabel = (label: string) => labels.includes(label);
+  const hasUnread =
+    hasLabel("UNREAD") || (!hasSyncedLabels && email.is_read === false);
   const isSent =
     hasLabel("SENT") || (!hasSyncedLabels && Boolean(email.is_sent));
   const isDraft =
@@ -271,42 +275,19 @@ function getEmailFolderState(email: Partial<Email>) {
     hasLabel("SPAM") || (!hasSyncedLabels && Boolean(email.is_spam));
   const isTrashed =
     hasLabel("TRASH") || (!hasSyncedLabels && Boolean(email.is_trashed));
-  const hasUnread =
-    hasLabel("UNREAD") || (!hasSyncedLabels && email.is_read === false);
-  const isReadLabel = hasSyncedLabels
-    ? !hasLabel("UNREAD")
-    : email.is_read === true;
-  const isArchivedByLabels =
-    hasSyncedLabels &&
-    !hasLabel("INBOX") &&
-    !hasLabel("SENT") &&
-    !hasLabel("DRAFT") &&
-    !hasLabel("SPAM") &&
-    !hasLabel("TRASH");
-  const isArchived =
-    (isArchivedByLabels || (!hasSyncedLabels && Boolean(email.is_archived))) &&
-    !isSent &&
-    !isDraft &&
-    !isSpam &&
-    !isTrashed;
+  const isArchived = hasSyncedLabels
+    ? !hasLabel("INBOX") && !isSpam && !isTrashed
+    : Boolean(email.is_archived);
 
   return {
     isAllMail: !isSpam && !isTrashed,
-    isUnread: hasUnread && !isSent && !isDraft && !isSpam && !isTrashed,
-    isRead: isReadLabel && !isSent && !isDraft && !isSpam && !isTrashed,
+    isUnread: hasUnread,
+    isRead: !hasUnread,
     isStarred:
-      (hasLabel("STARRED") ||
-        (!hasSyncedLabels && Boolean(email.is_starred))) &&
-      !isSpam &&
-      !isTrashed,
-    isReplied:
-      Boolean(email.has_replied) &&
-      !isSent &&
-      !isDraft &&
-      !isSpam &&
-      !isTrashed,
+      hasLabel("STARRED") || (!hasSyncedLabels && Boolean(email.is_starred)),
+    isReplied: Boolean(email.has_replied),
     isSent,
-    isDraft: isDraft && !isTrashed,
+    isDraft,
     isArchived,
     isSpam,
     isTrashed,
@@ -340,7 +321,7 @@ function getEmailContribution(email: Partial<Email>): EmailFolderCounts {
     read: state.isRead ? 1 : 0,
     starred: state.isStarred ? 1 : 0,
     replied: state.isReplied ? 1 : 0,
-    sent: state.isSent && !state.isTrashed ? 1 : 0,
+    sent: state.isSent ? 1 : 0,
     drafts: state.isDraft ? 1 : 0,
     archived: state.isArchived ? 1 : 0,
     spam: state.isSpam ? 1 : 0,
@@ -383,7 +364,7 @@ function getBulkEmailPatch(email: Email, action: BulkAction): Partial<Email> {
     return getEmailLabelPatch(email, ["UNREAD"]);
   }
   if (action === "archive") {
-    return getEmailLabelPatch(email, [], ["INBOX", "SPAM", "TRASH"]);
+    return getEmailLabelPatch(email, [], ["INBOX"]);
   }
   if (action === "trash") {
     return getEmailLabelPatch(email, ["TRASH"], ["INBOX"]);
@@ -413,8 +394,10 @@ function formatEmailTimestamp(
   return date ? format(date, pattern) : fallback;
 }
 
-function getDateTimeAttribute(value: string | null | undefined) {
-  return getValidDate(value) ? value : undefined;
+function getDateTimeAttribute(
+  value: string | null | undefined,
+): string | undefined {
+  return value && getValidDate(value) ? value : undefined;
 }
 
 function getSenderName(email: Partial<Email>) {
@@ -445,7 +428,7 @@ function emailMatchesStatus(email: Email, status: unknown) {
   if (status === "read") return state.isRead;
   if (status === "starred") return state.isStarred;
   if (status === "replied") return state.isReplied;
-  if (status === "sent") return state.isSent && !state.isTrashed;
+  if (status === "sent") return state.isSent;
   if (status === "drafts") return state.isDraft;
   if (status === "archived") return state.isArchived;
   if (status === "spam") return state.isSpam;
@@ -543,11 +526,17 @@ function InboxPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
     queryFn: () => listAcc(),
+    staleTime: 2 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const { data: queriedEmails = [], isLoading } = useQuery({
     queryKey: ["emails", search, from, status],
     queryFn: () =>
       listEm({ data: { search, status, fromDate: from || undefined } }),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const {
     data: fetchedAttachments,
@@ -865,7 +854,7 @@ function InboxPage() {
       if (!email) return {};
       const previousCounts = applyOptimisticEmailPatch(
         email,
-        getEmailLabelPatch(email, [], ["INBOX", "SPAM", "TRASH"]),
+        getEmailLabelPatch(email, [], ["INBOX"]),
       );
       const previousSelected = selected;
       setSelected((email) => (email?.id === id ? null : email));
