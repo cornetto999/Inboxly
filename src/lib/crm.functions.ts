@@ -918,6 +918,21 @@ function getEmailLabelUpdateFromLabels(
   };
 }
 
+function shouldPreserveLocalSpamStar(
+  row: EmailFolderStateRow | null | undefined,
+  gmailLabelIds: string[],
+) {
+  if (!row) return false;
+
+  const gmailLabels = gmailLabelIds.map((label) => label.toUpperCase());
+  if (!gmailLabels.includes("SPAM") || gmailLabels.includes("STARRED")) {
+    return false;
+  }
+
+  const localLabels = getEmailLabels(row).map((label) => label.toUpperCase());
+  return localLabels.includes("STARRED") || Boolean(row.is_starred);
+}
+
 type EmailLabelUpdatePayload = ReturnType<typeof getEmailLabelUpdate>;
 
 function getLegacyEmailLabelUpdate(update: EmailLabelUpdatePayload) {
@@ -1094,6 +1109,17 @@ type GmailMessageSummary = {
   historyId?: string;
 };
 
+class GmailApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly details: string,
+  ) {
+    super(message);
+    this.name = "GmailApiError";
+  }
+}
+
 async function fetchGmailMessageSummary({
   context,
   account,
@@ -1133,10 +1159,18 @@ function getFreshEmailLabelUpdate(
 async function throwGmailError(action: string, res: Response): Promise<never> {
   const details = await res.text();
   if (res.status === 401 || res.status === 403) {
-    throw new Error(`Gmail ${action} failed. Reconnect Gmail in Settings.`);
+    throw new GmailApiError(
+      `Gmail ${action} failed. Reconnect Gmail in Settings.`,
+      res.status,
+      details,
+    );
   }
 
-  throw new Error(`Gmail ${action} failed: ${res.status} ${details}`);
+  throw new GmailApiError(
+    `Gmail ${action} failed: ${res.status} ${details}`,
+    res.status,
+    details,
+  );
 }
 
 async function getEmailAndAccount(
@@ -1172,12 +1206,36 @@ async function modifyGmailLabels({
   removeLabelIds?: string[];
 }) {
   const { email, account } = await getEmailAndAccount(context, emailId);
+  return modifyGmailLabelsForEmail({
+    context,
+    email,
+    account,
+    addLabelIds,
+    removeLabelIds,
+  });
+}
+
+async function modifyGmailLabelsForEmail({
+  context,
+  email,
+  account,
+  addLabelIds = [],
+  removeLabelIds = [],
+}: {
+  context: AuthenticatedFunctionContext;
+  email: EmailRow;
+  account: EmailAccountRow;
+  addLabelIds?: string[];
+  removeLabelIds?: string[];
+}) {
   if (!email.gmail_message_id) return { email, account, gmailMessage: null };
 
   const res = await callGmailApi({
     context,
     account,
-    path: `/gmail/v1/users/me/messages/${email.gmail_message_id}/modify`,
+    path: `/gmail/v1/users/me/messages/${encodeURIComponent(
+      email.gmail_message_id,
+    )}/modify`,
     init: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1189,6 +1247,79 @@ async function modifyGmailLabels({
     .json()
     .catch(() => null)) as GmailMessageSummary | null;
   return { email, account, gmailMessage };
+}
+
+function isOnlyStarLabelChange(
+  addLabelIds: string[] = [],
+  removeLabelIds: string[] = [],
+) {
+  const changedLabels = [...addLabelIds, ...removeLabelIds];
+  return (
+    changedLabels.length > 0 &&
+    changedLabels.every((label) => label.toUpperCase() === "STARRED")
+  );
+}
+
+function canFallbackToLocalSpamStar({
+  error,
+  email,
+  addLabelIds,
+  removeLabelIds,
+}: {
+  error: unknown;
+  email: EmailRow;
+  addLabelIds: string[];
+  removeLabelIds: string[];
+}) {
+  return (
+    error instanceof GmailApiError &&
+    error.status === 400 &&
+    isOnlyStarLabelChange(addLabelIds, removeLabelIds) &&
+    getEmailFolderState(email).isSpam
+  );
+}
+
+async function applyStarEmailState({
+  context,
+  emailId,
+  isStarred,
+}: {
+  context: AuthenticatedFunctionContext;
+  emailId: string;
+  isStarred: boolean;
+}) {
+  const addLabelIds = isStarred ? ["STARRED"] : [];
+  const removeLabelIds = isStarred ? [] : ["STARRED"];
+  const { email, account } = await getEmailAndAccount(context, emailId);
+  let gmailMessage: GmailMessageSummary | null = null;
+
+  try {
+    const result = await modifyGmailLabelsForEmail({
+      context,
+      email,
+      account,
+      addLabelIds,
+      removeLabelIds,
+    });
+    gmailMessage = result.gmailMessage;
+  } catch (error) {
+    if (
+      !canFallbackToLocalSpamStar({
+        error,
+        email,
+        addLabelIds,
+        removeLabelIds,
+      })
+    ) {
+      throw error;
+    }
+  }
+
+  await updateEmailLabelState(
+    context,
+    emailId,
+    getFreshEmailLabelUpdate(email, gmailMessage, addLabelIds, removeLabelIds),
+  );
 }
 
 async function trashGmailMessage({
@@ -1587,9 +1718,24 @@ export const syncGmail = createServerFn({ method: "POST" })
         const receivedAt = msg.internalDate
           ? new Date(Number(msg.internalDate)).toISOString()
           : new Date().toISOString();
-        const labelIds = msg.labelIds ?? [];
-        const statusFields = getGmailStatusFields(labelIds, msg.payload);
+        let labelIds = msg.labelIds ?? [];
         const lastSyncedAt = new Date().toISOString();
+
+        const { data: existing, error: existingError } = await context.supabase
+          .from("emails")
+          .select("id, label_ids, labels, is_starred")
+          .eq("account_id", account.id)
+          .eq("gmail_message_id", mid)
+          .maybeSingle();
+        if (existingError) {
+          throw toSupabaseError(existingError, "public.emails");
+        }
+
+        if (shouldPreserveLocalSpamStar(existing, labelIds)) {
+          labelIds = [...labelIds, "STARRED"];
+        }
+
+        const statusFields = getGmailStatusFields(labelIds, msg.payload);
 
         const legacyEmailFields = {
           gmail_thread_id: msg.threadId,
@@ -1624,16 +1770,6 @@ export const syncGmail = createServerFn({ method: "POST" })
                 : {}),
             }
           : legacyEmailFields;
-
-        const { data: existing, error: existingError } = await context.supabase
-          .from("emails")
-          .select("id")
-          .eq("account_id", account.id)
-          .eq("gmail_message_id", mid)
-          .maybeSingle();
-        if (existingError) {
-          throw toSupabaseError(existingError, "public.emails");
-        }
 
         let emailId: string;
         if (existing) {
@@ -2225,24 +2361,11 @@ export const starEmail = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), isStarred: z.boolean() }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    const addLabelIds = data.isStarred ? ["STARRED"] : [];
-    const removeLabelIds = data.isStarred ? [] : ["STARRED"];
-    const { email, gmailMessage } = await modifyGmailLabels({
+    await applyStarEmailState({
       context,
       emailId: data.id,
-      addLabelIds,
-      removeLabelIds,
+      isStarred: data.isStarred,
     });
-    await updateEmailLabelState(
-      context,
-      data.id,
-      getFreshEmailLabelUpdate(
-        email,
-        gmailMessage,
-        addLabelIds,
-        removeLabelIds,
-      ),
-    );
     return { ok: true };
   });
 
@@ -2350,25 +2473,11 @@ export const bulkUpdateEmails = createServerFn({ method: "POST" })
         );
       }
       if (data.action === "star" || data.action === "unstar") {
-        const isStarred = data.action === "star";
-        const addLabelIds = isStarred ? ["STARRED"] : [];
-        const removeLabelIds = isStarred ? [] : ["STARRED"];
-        const { email, gmailMessage } = await modifyGmailLabels({
+        await applyStarEmailState({
           context,
           emailId: id,
-          addLabelIds,
-          removeLabelIds,
+          isStarred: data.action === "star",
         });
-        await updateEmailLabelState(
-          context,
-          id,
-          getFreshEmailLabelUpdate(
-            email,
-            gmailMessage,
-            addLabelIds,
-            removeLabelIds,
-          ),
-        );
       }
       if (data.action === "trash") {
         const { email, account, gmailMessage } = await trashGmailMessage({
