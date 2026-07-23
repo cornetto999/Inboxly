@@ -32,6 +32,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { getSidebarCounters } from "@/lib/crm.functions";
+import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
@@ -131,10 +132,19 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="gap-3 border-b border-sidebar-border p-3">
+      <SidebarHeader
+        className={cn(
+          "gap-3 border-b border-sidebar-border",
+          collapsed ? "items-center p-2" : "p-3",
+        )}
+      >
         <Link
           to="/dashboard"
-          className="flex h-11 items-center gap-2 rounded-lg px-2 font-semibold text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          aria-label="Go to dashboard"
+          className={cn(
+            "flex items-center rounded-lg font-semibold text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+            collapsed ? "h-8 w-8 justify-center p-0" : "h-11 gap-2 px-2",
+          )}
         >
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
             <Inbox className="h-4 w-4" />
