@@ -5,6 +5,7 @@ import { getDashboardStats } from "@/lib/crm.functions";
 import { getErrorMessage, toError } from "@/lib/errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { MetricStrip, PageHeader, PageShell } from "@/components/crm-ui";
 import {
   ArrowUpRight,
   Users,
@@ -56,6 +57,10 @@ function Dashboard() {
         throw toError(error, "Unable to load dashboard.");
       }
     },
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
   });
   const lastEmailSync = data.lastEmailSyncAt
     ? format(new Date(data.lastEmailSyncAt), "MMM d, yyyy h:mm a")
@@ -212,30 +217,30 @@ function Dashboard() {
   );
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <Badge variant="outline" className="mb-3 bg-card">
+    <PageShell>
+      <PageHeader
+        title="Dashboard"
+        description="Pipeline, inbox, and follow-up health at a glance."
+        eyebrow={
+          <Badge variant="outline" className="bg-card">
             <Activity className="mr-1 h-3 w-3 text-primary" />
             CRM overview
           </Badge>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Pipeline, inbox, and follow-up health at a glance.
-          </p>
-        </div>
-        <div className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm">
-          <div>
-            <span className="text-muted-foreground">Active customers</span>
-            <span className="ml-3 font-semibold tabular-nums">
-              {data.activeCustomers}
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Last Gmail sync: {lastEmailSync}
-          </p>
-        </div>
-      </div>
+        }
+      >
+        <MetricStrip
+          items={[
+            {
+              label: "Active customers",
+              value: data.activeCustomers,
+            },
+            {
+              label: "Last Gmail sync",
+              value: lastEmailSync,
+            },
+          ]}
+        />
+      </PageHeader>
       {(!data.moduleAvailability.tasks ||
         !data.moduleAvailability.campaigns) && (
         <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
@@ -312,7 +317,7 @@ function Dashboard() {
           emptyMessage="No customers yet. Convert a lead or inbox email to create one."
         />
       </div>
-    </div>
+    </PageShell>
   );
 }
 

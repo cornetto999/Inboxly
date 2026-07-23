@@ -11,10 +11,16 @@ import {
   upsertContact,
 } from "@/lib/crm.functions";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  EmptyState,
+  FormPanel,
+  PageHeader,
+  PageShell,
+  ToolbarCard,
+} from "@/components/crm-ui";
 import {
   Table,
   TableBody,
@@ -175,14 +181,11 @@ function ContactsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Contacts</h1>
-          <p className="text-sm text-muted-foreground">
-            Centralized senders, leads, and customers.
-          </p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Contacts"
+        description="Centralized senders, leads, and customers."
+      >
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => importContacts.mutate()}>
             <Upload className="h-4 w-4" />
@@ -197,23 +200,14 @@ function ContactsPage() {
             Export CSV
           </Button>
         </div>
-      </div>
+      </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <Card className="h-fit space-y-4 p-5">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-              <ContactRound className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-semibold">
-                {form.id ? "Edit contact" : "Add contact"}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Saved directly to Supabase.
-              </p>
-            </div>
-          </div>
+        <FormPanel
+          icon={ContactRound}
+          title={form.id ? "Edit contact" : "Add contact"}
+          description="Saved directly to Supabase."
+        >
           <div className="space-y-2">
             <Label>Email</Label>
             <Input
@@ -278,10 +272,10 @@ function ContactsPage() {
               </Button>
             )}
           </div>
-        </Card>
+        </FormPanel>
 
         <div className="space-y-4">
-          <Card className="p-4">
+          <ToolbarCard className="mb-0">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -291,18 +285,16 @@ function ContactsPage() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-          </Card>
+          </ToolbarCard>
 
           {contacts.length === 0 ? (
-            <Card className="border-dashed p-12 text-center">
-              <ContactRound className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-              <p className="font-medium">No contacts yet</p>
-              <p className="text-sm text-muted-foreground">
-                Import senders or add one manually.
-              </p>
-            </Card>
+            <EmptyState
+              icon={ContactRound}
+              title="No contacts yet"
+              description="Import senders or add one manually."
+            />
           ) : (
-            <div className="overflow-x-auto rounded-lg border">
+            <div>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -381,6 +373,6 @@ function ContactsPage() {
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

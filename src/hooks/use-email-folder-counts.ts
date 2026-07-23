@@ -50,9 +50,11 @@ export function useEmailFolderCounts(emailAccountId?: string) {
         data: emailAccountId ? { accountId: emailAccountId } : {},
       }),
     placeholderData: keepPreviousData,
-    staleTime: 2 * 60_000,
+    staleTime: 10_000,
     gcTime: 10 * 60_000,
-    refetchOnWindowFocus: false,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
   });
 
   const refreshCounts = useCallback(() => {

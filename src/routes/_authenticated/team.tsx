@@ -4,7 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminSetRole, getMyRole, listTeamMembers } from "@/lib/crm.functions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import {
+  EmptyState,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+} from "@/components/crm-ui";
 import {
   Table,
   TableBody,
@@ -53,30 +58,22 @@ function TeamPage() {
   const canManage = Boolean(role?.isAdmin);
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Team</h1>
-          <p className="text-sm text-muted-foreground">
-            Roles are enforced by Supabase Row Level Security policies.
-          </p>
-        </div>
-        <Card className="px-4 py-3 text-sm">
-          <span className="text-muted-foreground">Members</span>
-          <span className="ml-3 font-semibold tabular-nums">{team.length}</span>
-        </Card>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Team"
+        description="Roles are enforced by Supabase Row Level Security policies."
+      >
+        <MetricStrip items={[{ label: "Members", value: team.length }]} />
+      </PageHeader>
 
       {team.length === 0 ? (
-        <Card className="border-dashed p-12 text-center">
-          <UserCog className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No team members visible</p>
-          <p className="text-sm text-muted-foreground">
-            Admins can view all users. Staff can view their own profile.
-          </p>
-        </Card>
+        <EmptyState
+          icon={UserCog}
+          title="No team members visible"
+          description="Admins can view all users. Staff can view their own profile."
+        />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -145,6 +142,6 @@ function TeamPage() {
           </Table>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

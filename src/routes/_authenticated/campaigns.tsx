@@ -10,9 +10,15 @@ import {
 import { DueDatePicker } from "@/components/due-date-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  EmptyState,
+  FormPanel,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+} from "@/components/crm-ui";
 import {
   Select,
   SelectContent,
@@ -128,41 +134,25 @@ function CampaignsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Campaigns</h1>
-          <p className="text-sm text-muted-foreground">
-            Store campaign drafts, schedule plans, and delivery metrics.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2 text-sm shadow-sm">
-          <div className="px-3 py-2">
-            <div className="text-xs text-muted-foreground">Active</div>
-            <div className="font-semibold tabular-nums">{active}</div>
-          </div>
-          <div className="border-l px-3 py-2">
-            <div className="text-xs text-muted-foreground">Scheduled</div>
-            <div className="font-semibold tabular-nums">{scheduled}</div>
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Campaigns"
+        description="Store campaign drafts, schedule plans, and delivery metrics."
+      >
+        <MetricStrip
+          items={[
+            { label: "Active", value: active },
+            { label: "Scheduled", value: scheduled },
+          ]}
+        />
+      </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[24rem_minmax(0,1fr)]">
-        <Card className="h-fit space-y-4 p-5">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-              <Megaphone className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-semibold">
-                {form.id ? "Edit campaign" : "New campaign"}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Unsubscribed contacts are excluded at send time.
-              </p>
-            </div>
-          </div>
+        <FormPanel
+          icon={Megaphone}
+          title={form.id ? "Edit campaign" : "New campaign"}
+          description="Unsubscribed contacts are excluded at send time."
+        >
           <div className="space-y-2">
             <Label>Name</Label>
             <Input
@@ -228,18 +218,16 @@ function CampaignsPage() {
               </Button>
             )}
           </div>
-        </Card>
+        </FormPanel>
 
         {campaigns.length === 0 ? (
-          <Card className="border-dashed p-12 text-center">
-            <Megaphone className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-            <p className="font-medium">No campaigns</p>
-            <p className="text-sm text-muted-foreground">
-              Create a draft campaign to begin.
-            </p>
-          </Card>
+          <EmptyState
+            icon={Megaphone}
+            title="No campaigns"
+            description="Create a draft campaign to begin."
+          />
         ) : (
-          <div className="overflow-x-auto rounded-lg border">
+          <div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -305,6 +293,6 @@ function CampaignsPage() {
           </div>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }

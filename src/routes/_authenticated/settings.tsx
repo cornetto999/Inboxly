@@ -21,6 +21,7 @@ import { getErrorMessage, toError } from "@/lib/errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader, PageShell } from "@/components/crm-ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -211,13 +212,8 @@ function SettingsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Connect your email accounts.
-        </p>
-      </div>
+    <PageShell width="narrow">
+      <PageHeader title="Settings" description="Connect your email accounts." />
 
       <Card className="space-y-5 border-border/80 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
@@ -388,6 +384,6 @@ function SettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageShell>
   );
 }

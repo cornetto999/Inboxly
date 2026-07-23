@@ -24,11 +24,23 @@ import {
   getEmailThread,
 } from "@/lib/crm.functions";
 import type { EmailFolderCounts } from "@/lib/crm.functions";
+import {
+  EMAIL_FOLDER_COUNT_KEYS,
+  getEmailFolderState,
+  getEmailLabels,
+} from "@/lib/email-folder-state";
 import { useEmailFolderCounts } from "@/hooks/use-email-folder-counts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DataCard,
+  PageHeader,
+  PageShell,
+  ToolbarCard,
+} from "@/components/crm-ui";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -194,29 +206,8 @@ type BulkAction =
 
 const EMPTY_ATTACHMENTS: EmailAttachment[] = [];
 
-const EMAIL_COUNT_KEYS = [
-  "all",
-  "unread",
-  "read",
-  "starred",
-  "replied",
-  "sent",
-  "drafts",
-  "archived",
-  "spam",
-  "trash",
-] as const satisfies readonly (keyof EmailFolderCounts)[];
-
-function getEmailLabels(email: Partial<Email>) {
-  const labelIds = "label_ids" in email ? email.label_ids : undefined;
-  const labels = Array.isArray(labelIds)
-    ? labelIds
-    : "labels" in email
-      ? email.labels
-      : [];
-  if (!Array.isArray(labels)) return [];
-  return labels.filter((label): label is string => typeof label === "string");
-}
+const EMAIL_COUNT_KEYS =
+  EMAIL_FOLDER_COUNT_KEYS satisfies readonly (keyof EmailFolderCounts)[];
 
 function updateEmailLabels(
   labels: unknown,
@@ -258,39 +249,6 @@ function getEmailLabelPatch(
     is_spam: isSpam,
     is_trashed: isTrashed,
     is_archived: !hasLabel("INBOX") && !isSpam && !isTrashed,
-  };
-}
-
-function getEmailFolderState(email: Partial<Email>) {
-  const labels = getEmailLabels(email).map((label) => label.toUpperCase());
-  const hasSyncedLabels = labels.length > 0;
-  const hasLabel = (label: string) => labels.includes(label);
-  const hasUnread =
-    hasLabel("UNREAD") || (!hasSyncedLabels && email.is_read === false);
-  const isSent =
-    hasLabel("SENT") || (!hasSyncedLabels && Boolean(email.is_sent));
-  const isDraft =
-    hasLabel("DRAFT") || (!hasSyncedLabels && Boolean(email.is_draft));
-  const isSpam =
-    hasLabel("SPAM") || (!hasSyncedLabels && Boolean(email.is_spam));
-  const isTrashed =
-    hasLabel("TRASH") || (!hasSyncedLabels && Boolean(email.is_trashed));
-  const isArchived = hasSyncedLabels
-    ? !hasLabel("INBOX") && !isSpam && !isTrashed
-    : Boolean(email.is_archived);
-
-  return {
-    isAllMail: !isSpam && !isTrashed,
-    isUnread: hasUnread,
-    isRead: !hasUnread,
-    isStarred:
-      hasLabel("STARRED") || (!hasSyncedLabels && Boolean(email.is_starred)),
-    isReplied: Boolean(email.has_replied),
-    isSent,
-    isDraft,
-    isArchived,
-    isSpam,
-    isTrashed,
   };
 }
 
@@ -1045,20 +1003,18 @@ function InboxPage() {
   };
 
   return (
-    <div
-      className={`mx-auto p-3 sm:p-5 lg:p-8 ${
-        selected ? "lg:max-w-none lg:pr-[60vw]" : "max-w-7xl"
-      }`}
+    <PageShell
+      width={selected ? "wide" : "default"}
+      className={selected ? "lg:pr-[60vw]" : undefined}
     >
-      <div className="mb-5 flex flex-col justify-between gap-4 sm:mb-6 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Inbox</h1>
-          <p className="text-sm text-muted-foreground">
-            {showingUnread
-              ? `Unread processed: ${Math.max(0, emails.length - unreadEmails.length)} of ${emails.length}. Remaining unread: ${unreadEmails.length}`
-              : `${emails.length} email(s)`}
-          </p>
-        </div>
+      <PageHeader
+        title="Inbox"
+        description={
+          showingUnread
+            ? `Unread processed: ${Math.max(0, emails.length - unreadEmails.length)} of ${emails.length}. Remaining unread: ${unreadEmails.length}`
+            : `${emails.length} email(s)`
+        }
+      >
         <div className="flex w-full gap-2 sm:w-auto">
           {accounts.length === 0 ? (
             <Button className="w-full sm:w-auto" variant="outline" asChild>
@@ -1079,9 +1035,9 @@ function InboxPage() {
             </Button>
           )}
         </div>
-      </div>
+      </PageHeader>
 
-      <Card className="mb-4 border-border/80 p-3 shadow-sm sm:p-4">
+      <ToolbarCard>
         <div className="mb-3 flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Sheet>
@@ -1247,9 +1203,9 @@ function InboxPage() {
             </div>
           )}
         </div>
-      </Card>
+      </ToolbarCard>
 
-      <Card className="overflow-hidden border-border/80 shadow-sm">
+      <DataCard>
         {isLoading ? (
           <div className="p-12 text-center text-muted-foreground">
             <Loader2 className="mx-auto h-6 w-6 animate-spin" />
@@ -1569,7 +1525,7 @@ function InboxPage() {
             </div>
           </div>
         )}
-      </Card>
+      </DataCard>
 
       <Dialog
         modal={false}
@@ -1777,7 +1733,7 @@ function InboxPage() {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <ScrollArea className="min-h-0 flex-1">
                 <div className="space-y-5 p-4 sm:space-y-6 sm:p-7">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">To:</span>
@@ -1852,12 +1808,12 @@ function InboxPage() {
                   email={selected}
                   accountId={accounts[0]?.id}
                 />
-              </div>
+              </ScrollArea>
             </>
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }
 

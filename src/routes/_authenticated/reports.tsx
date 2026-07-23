@@ -5,6 +5,8 @@ import { useState } from "react";
 import { getReportDrilldown, getReportsData } from "@/lib/crm.functions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader, PageShell } from "@/components/crm-ui";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -92,13 +94,11 @@ function ReportsPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          Database-backed CRM performance snapshots.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Reports"
+        description="Database-backed CRM performance snapshots."
+      />
 
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {reportCards.map(({ label, value, kind }) => (
@@ -163,63 +163,65 @@ function ReportsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 overflow-auto p-3 sm:p-6">
-            {drilldownLoading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading table...
-              </div>
-            ) : drilldownError ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                {drilldownError instanceof Error
-                  ? drilldownError.message
-                  : "Unable to load this report table."}
-              </div>
-            ) : !drilldown || drilldown.rows.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No records found for this report.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {drilldown.columns.map((column) => (
-                        <TableHead key={column}>{column}</TableHead>
-                      ))}
-                      <TableHead className="w-24 text-right">Open</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {drilldown.rows.map((row) => (
-                      <TableRow key={row.id}>
-                        {row.values.map((value, index) => (
-                          <TableCell
-                            key={`${row.id}-${drilldown.columns[index]}`}
-                            className={index === 0 ? "font-medium" : ""}
-                          >
-                            {value}
-                          </TableCell>
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-3 sm:p-6">
+              {drilldownLoading ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading table...
+                </div>
+              ) : drilldownError ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  {drilldownError instanceof Error
+                    ? drilldownError.message
+                    : "Unable to load this report table."}
+                </div>
+              ) : !drilldown || drilldown.rows.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                  No records found for this report.
+                </div>
+              ) : (
+                <div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {drilldown.columns.map((column) => (
+                          <TableHead key={column}>{column}</TableHead>
                         ))}
-                        <TableCell className="text-right">
-                          {row.href ? (
-                            <Button size="sm" variant="ghost" asChild>
-                              <a href={row.href}>Open</a>
-                            </Button>
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
+                        <TableHead className="w-24 text-right">Open</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
+                    </TableHeader>
+                    <TableBody>
+                      {drilldown.rows.map((row) => (
+                        <TableRow key={row.id}>
+                          {row.values.map((value, index) => (
+                            <TableCell
+                              key={`${row.id}-${drilldown.columns[index]}`}
+                              className={index === 0 ? "font-medium" : ""}
+                            >
+                              {value}
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right">
+                            {row.href ? (
+                              <Button size="sm" variant="ghost" asChild>
+                                <a href={row.href}>Open</a>
+                              </Button>
+                            ) : (
+                              "-"
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }
 

@@ -1,9 +1,10 @@
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { PageShell } from "@/components/crm-ui";
 
 export function CrmModuleLoading({ name }: { name: string }) {
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <PageShell>
       <Card className="flex min-h-64 flex-col items-center justify-center gap-3 border-dashed p-8 text-center">
         <LoaderCircle className="h-8 w-8 animate-spin text-muted-foreground" />
         <div>
@@ -13,13 +14,13 @@ export function CrmModuleLoading({ name }: { name: string }) {
           </p>
         </div>
       </Card>
-    </div>
+    </PageShell>
   );
 }
 
 export function CrmModuleUnavailable({ name }: { name: string }) {
   return (
-    <div className="mx-auto max-w-7xl p-5 lg:p-8">
+    <PageShell>
       <Card className="flex min-h-64 flex-col items-center justify-center gap-3 border-amber-300 bg-amber-50/60 p-8 text-center dark:border-amber-900 dark:bg-amber-950/20">
         <AlertTriangle className="h-9 w-9 text-amber-600" />
         <div className="max-w-xl">
@@ -31,6 +32,6 @@ export function CrmModuleUnavailable({ name }: { name: string }) {
           </p>
         </div>
       </Card>
-    </div>
+    </PageShell>
   );
 }

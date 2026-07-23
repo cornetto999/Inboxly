@@ -29,6 +29,7 @@ import {
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { getSidebarCounters } from "@/lib/crm.functions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -107,6 +108,8 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
     queryKey: ["sidebar-counters"],
     queryFn: () => countersFn(),
     refetchInterval: 30000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
     retry: false,
   });
 
@@ -184,8 +187,9 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
                           {!collapsed && counterKey && (
-                            <span
-                              className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
+                            <Badge
+                              variant="secondary"
+                              className="ml-auto h-5 rounded-full bg-sidebar-accent px-2 text-sidebar-accent-foreground"
                               title={
                                 counterValue === null
                                   ? `${item.title} is unavailable until the database migration is applied`
@@ -194,7 +198,7 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                               aria-label={`${counterText} ${counterDescription}`}
                             >
                               {counterText}
-                            </span>
+                            </Badge>
                           )}
                         </Link>
                       ) : (
@@ -202,8 +206,9 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
                           {!collapsed && counterKey && (
-                            <span
-                              className="ml-auto rounded-full bg-sidebar-accent px-2 py-0.5 text-xs font-semibold text-sidebar-accent-foreground"
+                            <Badge
+                              variant="secondary"
+                              className="ml-auto h-5 rounded-full bg-sidebar-accent px-2 text-sidebar-accent-foreground"
                               title={
                                 counterValue === null
                                   ? `${item.title} is unavailable until the database migration is applied`
@@ -212,7 +217,7 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                               aria-label={`${counterText} ${counterDescription}`}
                             >
                               {counterText}
-                            </span>
+                            </Badge>
                           )}
                         </Link>
                       )}

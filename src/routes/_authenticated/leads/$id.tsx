@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { PageShell } from "@/components/crm-ui";
 import {
   Select,
   SelectContent,
@@ -107,7 +108,7 @@ function LeadDetail() {
   const { lead, notes, reminders, emails, activity } = data;
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
+    <PageShell>
       <Link
         to="/leads"
         search={{ status: undefined }}
@@ -286,6 +287,6 @@ function LeadDetail() {
           </div>
         </Card>
       </div>
-    </div>
+    </PageShell>
   );
 }

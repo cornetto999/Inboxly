@@ -8,12 +8,19 @@ import {
   completeReminder,
   deleteReminder,
 } from "@/lib/crm.functions";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import {
+  DataCard,
+  EmptyState,
+  FormPanel,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+} from "@/components/crm-ui";
 import { DueDatePicker } from "@/components/due-date-picker";
 import { Bell, CalendarClock, Trash2 } from "lucide-react";
 import { format, isPast } from "date-fns";
@@ -70,43 +77,26 @@ function RemindersPage() {
   ).length;
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Reminders</h1>
-          <p className="text-sm text-muted-foreground">
-            Stay on top of follow-ups.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2 text-sm shadow-sm">
-          <div className="px-3 py-2">
-            <div className="text-xs text-muted-foreground">Open</div>
-            <div className="font-semibold tabular-nums">
-              {openReminders.length}
-            </div>
-          </div>
-          <div className="border-l px-3 py-2">
-            <div className="text-xs text-muted-foreground">Overdue</div>
-            <div className="font-semibold tabular-nums text-rose-600">
-              {overdueCount}
-            </div>
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader title="Reminders" description="Stay on top of follow-ups.">
+        <MetricStrip
+          items={[
+            { label: "Open", value: openReminders.length },
+            {
+              label: "Overdue",
+              value: overdueCount,
+              valueClassName: "text-rose-600",
+            },
+          ]}
+        />
+      </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <Card className="h-fit border-border/80 p-5 shadow-sm">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-              <CalendarClock className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-semibold">New reminder</h2>
-              <p className="text-xs text-muted-foreground">
-                Schedule the next follow-up.
-              </p>
-            </div>
-          </div>
+        <FormPanel
+          icon={CalendarClock}
+          title="New reminder"
+          description="Schedule the next follow-up."
+        >
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Title</Label>
@@ -128,21 +118,17 @@ function RemindersPage() {
               Add reminder
             </Button>
           </div>
-        </Card>
+        </FormPanel>
 
         <div>
           {rs.length === 0 ? (
-            <Card className="border-dashed p-12 text-center shadow-sm">
-              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
-                <Bell className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="font-medium">No reminders</p>
-              <p className="text-sm text-muted-foreground">
-                Create your first follow-up to keep the pipeline warm.
-              </p>
-            </Card>
+            <EmptyState
+              icon={Bell}
+              title="No reminders"
+              description="Create your first follow-up to keep the pipeline warm."
+            />
           ) : (
-            <Card className="overflow-hidden border-border/80 shadow-sm">
+            <DataCard>
               <div className="divide-y divide-border">
                 {rs.map((r) => {
                   const overdue = !r.completed_at && isPast(new Date(r.due_at));
@@ -197,10 +183,10 @@ function RemindersPage() {
                   );
                 })}
               </div>
-            </Card>
+            </DataCard>
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

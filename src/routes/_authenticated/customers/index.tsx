@@ -4,7 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { listCustomers } from "@/lib/crm.functions";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  EmptyState,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+  ToolbarCard,
+} from "@/components/crm-ui";
 import {
   Table,
   TableBody,
@@ -35,23 +43,17 @@ function CustomersPage() {
   );
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
-          <p className="text-sm text-muted-foreground">
-            {filtered.length} shown from {customers.length} total
-          </p>
-        </div>
-        <div className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm">
-          <span className="text-muted-foreground">Active accounts</span>
-          <span className="ml-3 font-semibold tabular-nums">
-            {customers.length}
-          </span>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Customers"
+        description={`${filtered.length} shown from ${customers.length} total`}
+      >
+        <MetricStrip
+          items={[{ label: "Active accounts", value: customers.length }]}
+        />
+      </PageHeader>
 
-      <Card className="mb-4 border-border/80 p-4 shadow-sm">
+      <ToolbarCard>
         <div className="relative max-w-xl">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -61,21 +63,17 @@ function CustomersPage() {
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-      </Card>
+      </ToolbarCard>
 
       {filtered.length === 0 ? (
-        <Card className="border-dashed p-12 text-center shadow-sm">
-          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
-            <UserCheck className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <p className="font-medium">No customers yet</p>
-          <p className="text-sm text-muted-foreground">
-            Convert leads or emails into customers.
-          </p>
-        </Card>
+        <EmptyState
+          icon={UserCheck}
+          title="No customers yet"
+          description="Convert leads or emails into customers."
+        />
       ) : (
         <>
-          <div className="hidden overflow-x-auto rounded-lg border md:block">
+          <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -120,9 +118,12 @@ function CustomersPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-500/20 bg-emerald-500/10 text-emerald-700"
+                      >
                         {c.status}
-                      </span>
+                      </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
                       {format(new Date(c.created_at), "MMM d, yyyy")}
@@ -162,9 +163,12 @@ function CustomersPage() {
                       {customer.company || "Unassigned"}
                     </span>
                   </span>
-                  <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-500/20 bg-emerald-500/10 text-emerald-700"
+                  >
                     {customer.status}
-                  </span>
+                  </Badge>
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">
                   Created {format(new Date(customer.created_at), "MMM d, yyyy")}
@@ -174,6 +178,6 @@ function CustomersPage() {
           </div>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

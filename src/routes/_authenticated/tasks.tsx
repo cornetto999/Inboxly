@@ -10,6 +10,14 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  EmptyState,
+  FormPanel,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+  ToolbarCard,
+} from "@/components/crm-ui";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -138,43 +146,29 @@ function TasksPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
-          <p className="text-sm text-muted-foreground">
-            Work items linked to emails, leads, and customers.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2 text-sm shadow-sm">
-          <div className="px-3 py-2">
-            <div className="text-xs text-muted-foreground">Open</div>
-            <div className="font-semibold tabular-nums">{openTasks.length}</div>
-          </div>
-          <div className="border-l px-3 py-2">
-            <div className="text-xs text-muted-foreground">Overdue</div>
-            <div className="font-semibold tabular-nums text-rose-600">
-              {overdue}
-            </div>
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Tasks"
+        description="Work items linked to emails, leads, and customers."
+      >
+        <MetricStrip
+          items={[
+            { label: "Open", value: openTasks.length },
+            {
+              label: "Overdue",
+              value: overdue,
+              valueClassName: "text-rose-600",
+            },
+          ]}
+        />
+      </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <Card className="h-fit space-y-4 p-5">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-              <ListTodo className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-semibold">
-                {form.id ? "Edit task" : "New task"}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Assign work and track completion.
-              </p>
-            </div>
-          </div>
+        <FormPanel
+          icon={ListTodo}
+          title={form.id ? "Edit task" : "New task"}
+          description="Assign work and track completion."
+        >
           <div className="space-y-2">
             <Label>Title</Label>
             <Input
@@ -257,10 +251,10 @@ function TasksPage() {
               </Button>
             )}
           </div>
-        </Card>
+        </FormPanel>
 
         <div className="space-y-4">
-          <Card className="p-4">
+          <ToolbarCard className="mb-0">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="max-w-xs">
                 <SelectValue />
@@ -274,18 +268,16 @@ function TasksPage() {
                 ))}
               </SelectContent>
             </Select>
-          </Card>
+          </ToolbarCard>
           {tasks.length === 0 ? (
-            <Card className="border-dashed p-12 text-center">
-              <ListTodo className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-              <p className="font-medium">No tasks</p>
-              <p className="text-sm text-muted-foreground">
-                Create the next action for your CRM workflow.
-              </p>
-            </Card>
+            <EmptyState
+              icon={ListTodo}
+              title="No tasks"
+              description="Create the next action for your CRM workflow."
+            />
           ) : (
             <>
-              <div className="hidden overflow-x-auto rounded-lg border md:block">
+              <div className="hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -482,6 +474,6 @@ function TasksPage() {
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

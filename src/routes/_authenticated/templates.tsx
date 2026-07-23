@@ -7,11 +7,18 @@ import {
   upsertTemplate,
   deleteTemplate,
 } from "@/lib/crm.functions";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  DataCard,
+  EmptyState,
+  FormPanel,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+} from "@/components/crm-ui";
 import { Mail, Save, Trash2, FileText } from "lucide-react";
 import { toast } from "sonner";
 
@@ -53,32 +60,19 @@ function TemplatesPage() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Email templates</h1>
-          <p className="text-sm text-muted-foreground">
-            Reusable replies for common sales conversations.
-          </p>
-        </div>
-        <div className="rounded-lg border bg-card px-4 py-3 text-sm shadow-sm">
-          <span className="text-muted-foreground">Saved templates</span>
-          <span className="ml-3 font-semibold tabular-nums">{ts.length}</span>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Email templates"
+        description="Reusable replies for common sales conversations."
+      >
+        <MetricStrip items={[{ label: "Saved templates", value: ts.length }]} />
+      </PageHeader>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
-        <Card className="space-y-4 border-border/80 p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-              <Mail className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="font-semibold">New template</h2>
-              <p className="text-xs text-muted-foreground">
-                HTML is supported for rich replies.
-              </p>
-            </div>
-          </div>
+        <FormPanel
+          icon={Mail}
+          title="New template"
+          description="HTML is supported for rich replies."
+        >
           <div className="space-y-2">
             <Label>Name</Label>
             <Input
@@ -111,19 +105,16 @@ function TemplatesPage() {
             <Save className="h-4 w-4" />
             Save template
           </Button>
-        </Card>
-        <Card className="h-fit overflow-hidden border-border/80 shadow-sm">
-          {ts.length === 0 ? (
-            <div className="p-10 text-center">
-              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
-                <FileText className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="font-medium">No templates yet</p>
-              <p className="text-sm text-muted-foreground">
-                Saved templates appear here.
-              </p>
-            </div>
-          ) : (
+        </FormPanel>
+        {ts.length === 0 ? (
+          <EmptyState
+            icon={FileText}
+            title="No templates yet"
+            description="Saved templates appear here."
+            className="h-fit"
+          />
+        ) : (
+          <DataCard className="h-fit">
             <div className="divide-y divide-border">
               {ts.map((t) => (
                 <div
@@ -150,9 +141,9 @@ function TemplatesPage() {
                 </div>
               ))}
             </div>
-          )}
-        </Card>
+          </DataCard>
+        )}
       </div>
-    </div>
+    </PageShell>
   );
 }

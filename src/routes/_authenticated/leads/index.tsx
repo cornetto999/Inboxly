@@ -8,6 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  EmptyState,
+  MetricStrip,
+  PageHeader,
+  PageShell,
+  ToolbarCard,
+} from "@/components/crm-ui";
+import {
   Table,
   TableBody,
   TableCell,
@@ -104,31 +111,26 @@ function LeadsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Leads</h1>
-          <p className="text-sm text-muted-foreground">
-            {filtered.length} shown from {leads.length} total
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2 text-sm shadow-sm">
-          <div className="px-3 py-2">
-            <div className="text-xs text-muted-foreground">Won</div>
-            <div className="font-semibold tabular-nums">
-              {leads.filter((lead) => lead.status === "won").length}
-            </div>
-          </div>
-          <div className="border-l px-3 py-2">
-            <div className="text-xs text-muted-foreground">Follow-up</div>
-            <div className="font-semibold tabular-nums">
-              {leads.filter((lead) => lead.status === "follow_up").length}
-            </div>
-          </div>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Leads"
+        description={`${filtered.length} shown from ${leads.length} total`}
+      >
+        <MetricStrip
+          items={[
+            {
+              label: "Won",
+              value: leads.filter((lead) => lead.status === "won").length,
+            },
+            {
+              label: "Follow-up",
+              value: leads.filter((lead) => lead.status === "follow_up").length,
+            },
+          ]}
+        />
+      </PageHeader>
 
-      <Card className="mb-4 border-border/80 p-4 shadow-sm">
+      <ToolbarCard>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -153,21 +155,17 @@ function LeadsPage() {
             </SelectContent>
           </Select>
         </div>
-      </Card>
+      </ToolbarCard>
 
       {filtered.length === 0 ? (
-        <Card className="border-dashed p-12 text-center shadow-sm">
-          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-lg bg-muted">
-            <Users className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <p className="font-medium">No leads</p>
-          <p className="text-sm text-muted-foreground">
-            Convert emails from your inbox to create leads.
-          </p>
-        </Card>
+        <EmptyState
+          icon={Users}
+          title="No leads"
+          description="Convert emails from your inbox to create leads."
+        />
       ) : (
         <>
-          <div className="hidden overflow-x-auto rounded-lg border md:block">
+          <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -328,6 +326,6 @@ function LeadsPage() {
           </div>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

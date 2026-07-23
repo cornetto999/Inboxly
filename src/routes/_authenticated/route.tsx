@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getMyRole } from "@/lib/crm.functions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AutoGmailSync } from "@/components/auto-gmail-sync";
 import { RealtimeQuerySync } from "@/components/realtime-query-sync";
@@ -49,7 +50,7 @@ function AuthedLayout() {
       <RealtimeQuerySync />
       <div className="flex min-h-screen w-full min-w-0 bg-background">
         <AppSidebar isAdmin={isAdmin} />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/80 bg-background/85 px-3 backdrop-blur-xl sm:px-4 lg:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <SidebarTrigger className="h-9 w-9 rounded-lg border border-border bg-card shadow-sm" />
@@ -69,9 +70,14 @@ function AuthedLayout() {
               {isAdmin ? "Admin" : "Staff"}
             </Badge>
           </header>
-          <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-            <Outlet />
-          </main>
+          <ScrollArea
+            className="min-h-0 min-w-0 flex-1"
+            viewportClassName="min-w-0"
+          >
+            <main className="min-w-0">
+              <Outlet />
+            </main>
+          </ScrollArea>
         </div>
       </div>
     </SidebarProvider>

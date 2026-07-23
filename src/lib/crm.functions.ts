@@ -2,8 +2,20 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 import { getErrorMessage, toError } from "@/lib/errors";
+import {
+  countEmailFolderRows,
+  getEmailFolderState,
+  getEmailLabels,
+  type EmailFolderStateRow,
+} from "@/lib/email-folder-state";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+
+export { EMPTY_EMAIL_FOLDER_COUNTS } from "@/lib/email-folder-state";
+export type {
+  EmailFolderCountKey,
+  EmailFolderCounts,
+} from "@/lib/email-folder-state";
 
 const GMAIL_API_BASE_URL = "https://gmail.googleapis.com";
 
@@ -90,127 +102,19 @@ function groupRowsByDay(rows: { created_at?: string | null }[]) {
 type EmailAnalyticsRow = {
   is_read: boolean;
   is_sent?: boolean | null;
+  is_draft?: boolean | null;
+  is_spam?: boolean | null;
+  is_trashed?: boolean | null;
+  label_ids?: string[] | null;
   labels?: string[] | null;
+  has_replied?: boolean | null;
   received_at?: string | null;
   sent_at?: string | null;
   created_at?: string | null;
 };
 
-const EMAIL_FOLDER_COUNT_KEYS = [
-  "all",
-  "unread",
-  "read",
-  "starred",
-  "replied",
-  "sent",
-  "drafts",
-  "archived",
-  "spam",
-  "trash",
-] as const;
-
-export type EmailFolderCountKey = (typeof EMAIL_FOLDER_COUNT_KEYS)[number];
-export type EmailFolderCounts = Record<EmailFolderCountKey, number>;
-
-export const EMPTY_EMAIL_FOLDER_COUNTS: EmailFolderCounts =
-  EMAIL_FOLDER_COUNT_KEYS.reduce(
-    (counts, key) => ({ ...counts, [key]: 0 }),
-    {} as EmailFolderCounts,
-  );
-
-type EmailFolderCountRow = {
-  id?: string | null;
-  gmail_message_id?: string | null;
-  label_ids?: unknown;
-  labels?: unknown;
-  has_replied?: boolean | null;
-  replied_at?: string | null;
-  is_read?: boolean | null;
-  is_starred?: boolean | null;
-  is_sent?: boolean | null;
-  is_draft?: boolean | null;
-  is_archived?: boolean | null;
-  is_spam?: boolean | null;
-  is_trashed?: boolean | null;
-};
-
-function normalizeLabels(labels: unknown) {
-  if (!Array.isArray(labels)) return [];
-  return labels
-    .filter((label): label is string => typeof label === "string")
-    .map((label) => label.toUpperCase());
-}
-
-function getEmailFolderState(row: EmailFolderCountRow) {
-  const labels = normalizeLabels(row.label_ids ?? row.labels);
-  const hasSyncedLabels = labels.length > 0;
-  const hasLabel = (label: string) => labels.includes(label);
-  const hasUnread =
-    hasLabel("UNREAD") || (!hasSyncedLabels && row.is_read === false);
-  const isSent = hasLabel("SENT") || (!hasSyncedLabels && Boolean(row.is_sent));
-  const isDraft =
-    hasLabel("DRAFT") || (!hasSyncedLabels && Boolean(row.is_draft));
-  const isSpam = hasLabel("SPAM") || (!hasSyncedLabels && Boolean(row.is_spam));
-  const isTrashed =
-    hasLabel("TRASH") || (!hasSyncedLabels && Boolean(row.is_trashed));
-  const isArchived = hasSyncedLabels
-    ? !hasLabel("INBOX") && !isSpam && !isTrashed
-    : Boolean(row.is_archived);
-
-  return {
-    isAllMail: !isSpam && !isTrashed,
-    isUnread: hasUnread,
-    isRead: !hasUnread,
-    isStarred:
-      hasLabel("STARRED") || (!hasSyncedLabels && Boolean(row.is_starred)),
-    isReplied: Boolean(row.has_replied),
-    isSent,
-    isDraft,
-    isArchived,
-    isSpam,
-    isTrashed,
-  };
-}
-
-function countEmailFolderRows(rows: EmailFolderCountRow[]) {
-  const idsByFolder = EMAIL_FOLDER_COUNT_KEYS.reduce<
-    Record<EmailFolderCountKey, Set<string>>
-  >(
-    (sets, key) => ({
-      ...sets,
-      [key]: new Set<string>(),
-    }),
-    {} as Record<EmailFolderCountKey, Set<string>>,
-  );
-
-  for (const row of rows) {
-    const messageId = row.gmail_message_id ?? row.id;
-    if (!messageId) continue;
-    const state = getEmailFolderState(row);
-
-    if (state.isAllMail) idsByFolder.all.add(messageId);
-    if (state.isUnread) idsByFolder.unread.add(messageId);
-    if (state.isRead) idsByFolder.read.add(messageId);
-    if (state.isStarred) idsByFolder.starred.add(messageId);
-    if (state.isReplied) idsByFolder.replied.add(messageId);
-    if (state.isSent) idsByFolder.sent.add(messageId);
-    if (state.isDraft) idsByFolder.drafts.add(messageId);
-    if (state.isArchived) idsByFolder.archived.add(messageId);
-    if (state.isSpam) idsByFolder.spam.add(messageId);
-    if (state.isTrashed) idsByFolder.trash.add(messageId);
-  }
-
-  return EMAIL_FOLDER_COUNT_KEYS.reduce<EmailFolderCounts>(
-    (counts, key) => ({ ...counts, [key]: idsByFolder[key].size }),
-    { ...EMPTY_EMAIL_FOLDER_COUNTS },
-  );
-}
-
 function isSentEmail(row: EmailAnalyticsRow) {
-  return (
-    Boolean(row.is_sent) ||
-    Boolean(row.labels?.some((label) => label.toUpperCase() === "SENT"))
-  );
+  return getEmailFolderState(row).isSent;
 }
 
 function getEmailActivityDate(row: EmailAnalyticsRow) {
@@ -231,10 +135,16 @@ function groupEmailsByDay(rows: EmailAnalyticsRow[]) {
   return byDay;
 }
 
-async function getEmailAnalyticsRows(supabase: SupabaseClient<Database>) {
-  const enhancedResult = await supabase
-    .from("emails")
-    .select("is_read, is_sent, labels, received_at, sent_at, created_at");
+async function getEmailAnalyticsRows(context: AuthenticatedFunctionContext) {
+  const selectEmails = (columns: string) =>
+    context.supabase
+      .from("emails")
+      .select(columns)
+      .eq("user_id", context.userId);
+
+  const enhancedResult = await selectEmails(
+    "is_read, is_sent, is_draft, is_spam, is_trashed, label_ids, labels, has_replied, received_at, sent_at, created_at",
+  );
 
   if (!enhancedResult.error) {
     return (enhancedResult.data ?? []) as unknown as EmailAnalyticsRow[];
@@ -244,43 +154,54 @@ async function getEmailAnalyticsRows(supabase: SupabaseClient<Database>) {
     throw toSupabaseError(enhancedResult.error, "public.emails");
   }
 
-  const legacyResult = await supabase
-    .from("emails")
-    .select("is_read, labels, received_at, created_at");
+  const legacyResult = await selectEmails(
+    "is_read, labels, received_at, created_at",
+  );
   if (legacyResult.error) {
     throw toSupabaseError(legacyResult.error, "public.emails");
   }
 
-  return (legacyResult.data ?? []) as EmailAnalyticsRow[];
+  return (legacyResult.data ?? []) as unknown as EmailAnalyticsRow[];
 }
 
-async function getEmailFolderCountsForContext(
+function fromEmailFolderCountRpcRow(row: Record<string, unknown>) {
+  return {
+    all: Number(row.all_mail ?? 0),
+    unread: Number(row.unread ?? 0),
+    read: Number(row.read ?? 0),
+    starred: Number(row.starred ?? 0),
+    replied: Number(row.replied ?? 0),
+    sent: Number(row.sent ?? 0),
+    drafts: Number(row.drafts ?? 0),
+    archived: Number(row.archived ?? 0),
+    spam: Number(row.spam ?? 0),
+    trash: Number(row.trash ?? 0),
+  };
+}
+
+async function getEmailFolderCountsFromRpc(
   context: AuthenticatedFunctionContext,
   accountId?: string,
 ) {
-  const rpcResult = await context.supabase.rpc("get_gmail_folder_counts", {
+  const rpcResult = await context.supabase.rpc("get_gmail_folder_counts_v2", {
     p_account_id: accountId ?? null,
   });
   if (!rpcResult.error) {
     const row = rpcResult.data?.[0];
-    if (row) {
-      return {
-        all: Number(row.all_mail ?? 0),
-        unread: Number(row.unread ?? 0),
-        read: Number(row.read ?? 0),
-        starred: Number(row.starred ?? 0),
-        replied: Number(row.replied ?? 0),
-        sent: Number(row.sent ?? 0),
-        drafts: Number(row.drafts ?? 0),
-        archived: Number(row.archived ?? 0),
-        spam: Number(row.spam ?? 0),
-        trash: Number(row.trash ?? 0),
-      };
-    }
-  } else if (!isMissingSupabaseSchemaError(rpcResult.error)) {
-    throw toSupabaseError(rpcResult.error, "public.get_gmail_folder_counts");
+    return row ? fromEmailFolderCountRpcRow(row) : null;
   }
 
+  if (!isMissingSupabaseSchemaError(rpcResult.error)) {
+    throw toSupabaseError(rpcResult.error, "public.get_gmail_folder_counts_v2");
+  }
+
+  return null;
+}
+
+async function getEmailFolderCountsFromRows(
+  context: AuthenticatedFunctionContext,
+  accountId?: string,
+) {
   const selectEmails = (columns: string) => {
     let query = context.supabase
       .from("emails")
@@ -291,12 +212,12 @@ async function getEmailFolderCountsForContext(
   };
 
   const enhancedResult = await selectEmails(
-    "id, gmail_message_id, label_ids, labels, has_replied, replied_at, is_read, is_starred, is_sent, is_draft, is_archived, is_spam, is_trashed",
+    "id, gmail_message_id, label_ids, labels, has_replied, replied_at, is_read, is_starred, is_sent, is_draft, is_archived, is_spam, is_trashed, last_synced_at, received_at, sent_at, created_at",
   );
 
   if (!enhancedResult.error) {
     return countEmailFolderRows(
-      (enhancedResult.data ?? []) as EmailFolderCountRow[],
+      (enhancedResult.data ?? []) as EmailFolderStateRow[],
     );
   }
 
@@ -305,15 +226,25 @@ async function getEmailFolderCountsForContext(
   }
 
   const legacyResult = await selectEmails(
-    "id, gmail_message_id, labels, is_read",
+    "id, gmail_message_id, labels, is_read, received_at, created_at",
   );
   if (legacyResult.error) {
     throw toSupabaseError(legacyResult.error, "public.emails");
   }
 
   return countEmailFolderRows(
-    (legacyResult.data ?? []) as EmailFolderCountRow[],
+    (legacyResult.data ?? []) as EmailFolderStateRow[],
   );
+}
+
+async function getEmailFolderCountsForContext(
+  context: AuthenticatedFunctionContext,
+  accountId?: string,
+) {
+  const rpcCounts = await getEmailFolderCountsFromRpc(context, accountId);
+  if (rpcCounts) return rpcCounts;
+
+  return getEmailFolderCountsFromRows(context, accountId);
 }
 
 // ---------- Roles ----------
@@ -364,7 +295,7 @@ export const getDashboardStats = createServerFn({ method: "GET" })
         .select("id")
         .is("completed_at", null)
         .lt("due_at", today.start),
-      getEmailAnalyticsRows(supabase),
+      getEmailAnalyticsRows(context),
       getEmailFolderCountsForContext(context),
       supabase
         .from("email_accounts")
@@ -956,7 +887,7 @@ function updateLocalLabels(
 }
 
 function getCurrentLabelIds(email: { label_ids?: unknown; labels?: unknown }) {
-  return Array.isArray(email.label_ids) ? email.label_ids : email.labels;
+  return getEmailLabels(email);
 }
 
 function getEmailLabelUpdate(
@@ -1189,9 +1120,11 @@ function getFreshEmailLabelUpdate(
   addLabelIds: string[] = [],
   removeLabelIds: string[] = [],
 ) {
-  const labels = Array.isArray(gmailMessage?.labelIds)
-    ? gmailMessage.labelIds
-    : updateLocalLabels(getCurrentLabelIds(email), addLabelIds, removeLabelIds);
+  const labels = updateLocalLabels(
+    getCurrentLabelIds(email),
+    addLabelIds,
+    removeLabelIds,
+  );
   return getEmailLabelUpdateFromLabels(labels, {
     historyId: gmailMessage?.historyId,
   });
@@ -1252,11 +1185,9 @@ async function modifyGmailLabels({
     },
   });
   if (!res.ok) await throwGmailError("label update", res);
-  const gmailMessage = await fetchGmailMessageSummary({
-    context,
-    account,
-    gmailMessageId: email.gmail_message_id,
-  });
+  const gmailMessage = (await res
+    .json()
+    .catch(() => null)) as GmailMessageSummary | null;
   return { email, account, gmailMessage };
 }
 
@@ -1277,11 +1208,9 @@ async function trashGmailMessage({
     init: { method: "POST" },
   });
   if (!res.ok) await throwGmailError("trash", res);
-  const gmailMessage = await fetchGmailMessageSummary({
-    context,
-    account,
-    gmailMessageId: email.gmail_message_id,
-  });
+  const gmailMessage = (await res
+    .json()
+    .catch(() => null)) as GmailMessageSummary | null;
   return { email, account, gmailMessage };
 }
 
@@ -1386,9 +1315,8 @@ async function upsertEmailThread({
 
   const accountAddress = account.email_address.toLowerCase();
   const isOutgoing = (message: ThreadEmailRow) => {
-    const labels = normalizeLabels(message.label_ids ?? message.labels);
     return (
-      labels.includes("SENT") &&
+      getEmailLabels(message).some((label) => label.toUpperCase() === "SENT") &&
       message.from_email.toLowerCase() === accountAddress
     );
   };
@@ -3351,7 +3279,7 @@ export const getReportsData = createServerFn({ method: "GET" })
       campaignsResult,
       templatesResult,
     ] = await Promise.all([
-      getEmailAnalyticsRows(context.supabase),
+      getEmailAnalyticsRows(context),
       context.supabase.from("leads").select("id, status, source, created_at"),
       context.supabase.from("customers").select("id, status, created_at"),
       context.supabase.from("reminders").select("id, completed_at, due_at"),
@@ -3410,7 +3338,9 @@ export const getReportsData = createServerFn({ method: "GET" })
     return {
       totals: {
         emails: emailsData.length,
-        unreadEmails: emailsData.filter((email) => !email.is_read).length,
+        unreadEmails: emailsData.filter(
+          (email) => getEmailFolderState(email).isUnread,
+        ).length,
         leads: leadsData.length,
         customers: customersData.length,
         reminders: remindersData.length,

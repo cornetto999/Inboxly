@@ -546,6 +546,23 @@ export type Database = {
           trash: number;
         }[];
       };
+      get_gmail_folder_counts_v2: {
+        Args: {
+          p_account_id?: string | null;
+        };
+        Returns: {
+          all_mail: number;
+          unread: number;
+          read: number;
+          starred: number;
+          replied: number;
+          sent: number;
+          drafts: number;
+          archived: number;
+          spam: number;
+          trash: number;
+        }[];
+      };
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"];

@@ -6,9 +6,9 @@ import {
   adminListActivity,
   adminSetRole,
 } from "@/lib/crm.functions";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataCard, PageHeader, PageShell } from "@/components/crm-ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -54,16 +54,18 @@ function AdminPage() {
   });
 
   if (ue)
-    return <div className="p-8 text-destructive">{(ue as Error).message}</div>;
+    return (
+      <PageShell>
+        <div className="text-destructive">{(ue as Error).message}</div>
+      </PageShell>
+    );
 
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Admin Console</h1>
-        <p className="text-sm text-muted-foreground">
-          Manage user access and audit recent CRM activity.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Admin Console"
+        description="Manage user access and audit recent CRM activity."
+      />
       <Tabs defaultValue="users" className="space-y-4">
         <TabsList className="h-10 bg-card shadow-sm">
           <TabsTrigger value="users">Users ({users.length})</TabsTrigger>
@@ -133,7 +135,7 @@ function AdminPage() {
         </TabsContent>
 
         <TabsContent value="activity">
-          <Card className="overflow-hidden">
+          <DataCard>
             <div className="divide-y divide-border">
               {activity.map((a) => (
                 <div
@@ -154,9 +156,9 @@ function AdminPage() {
                 </div>
               ))}
             </div>
-          </Card>
+          </DataCard>
         </TabsContent>
       </Tabs>
-    </div>
+    </PageShell>
   );
 }

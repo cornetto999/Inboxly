@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Card, CardContent } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { consumeSupabaseUrlSession } from "@/lib/auth-url-session";
 import {
@@ -84,10 +85,12 @@ function AuthCallbackPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-      <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3 text-sm text-card-foreground shadow">
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        <span>{message}</span>
-      </div>
+      <Card>
+        <CardContent className="flex items-center gap-3 p-4 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span>{message}</span>
+        </CardContent>
+      </Card>
     </div>
   );
 }
