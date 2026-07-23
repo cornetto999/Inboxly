@@ -205,6 +205,7 @@ type BulkAction =
   | "unstar";
 
 const EMPTY_ATTACHMENTS: EmailAttachment[] = [];
+const LIVE_INBOX_REFETCH_INTERVAL_MS = 15_000;
 
 const EMAIL_COUNT_KEYS =
   EMAIL_FOLDER_COUNT_KEYS satisfies readonly (keyof EmailFolderCounts)[];
@@ -484,17 +485,21 @@ function InboxPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
     queryFn: () => listAcc(),
-    staleTime: 2 * 60_000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
   });
   const { data: queriedEmails = [], isLoading } = useQuery({
     queryKey: ["emails", search, from, status],
     queryFn: () =>
       listEm({ data: { search, status, fromDate: from || undefined } }),
     placeholderData: keepPreviousData,
-    staleTime: 60_000,
+    staleTime: 5_000,
     gcTime: 10 * 60_000,
-    refetchOnWindowFocus: false,
+    refetchInterval: LIVE_INBOX_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
   });
   const {
     data: fetchedAttachments,

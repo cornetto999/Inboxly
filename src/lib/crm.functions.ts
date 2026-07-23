@@ -1413,6 +1413,7 @@ export const syncGmail = createServerFn({ method: "POST" })
         accountId: z.string().uuid(),
         maxResults: z.number().min(1).max(100).optional(),
         forceTokenRefresh: z.boolean().optional(),
+        incrementalOnly: z.boolean().optional(),
       })
       .parse(input),
   )
@@ -1477,7 +1478,7 @@ export const syncGmail = createServerFn({ method: "POST" })
         return (listJson.messages ?? []).map((m) => m.id);
       };
       const listHistoryMessageIds = async () => {
-        if (!account.history_id) return [];
+        if (!account.history_id) return { messageIds: [], expired: false };
 
         const messageIds = new Set<string>();
         let pageToken: string | undefined;
@@ -1496,7 +1497,9 @@ export const syncGmail = createServerFn({ method: "POST" })
             account,
             path: `/gmail/v1/users/me/history?${search.toString()}`,
           });
-          if (historyRes.status === 404) return [];
+          if (historyRes.status === 404) {
+            return { messageIds: [], expired: true };
+          }
           if (!historyRes.ok) await throwGmailError("history", historyRes);
 
           const historyJson = (await historyRes.json()) as {
@@ -1525,18 +1528,22 @@ export const syncGmail = createServerFn({ method: "POST" })
           pageToken = historyJson.nextPageToken;
         } while (pageToken);
 
-        return Array.from(messageIds);
+        return { messageIds: Array.from(messageIds), expired: false };
       };
-      const [normalMessageIds, spamTrashMessageIds, historyMessageIds] =
-        await Promise.all([
-          listMessageIds(
-            `/gmail/v1/users/me/messages?maxResults=${maxResults}`,
-          ),
-          listMessageIds(
-            `/gmail/v1/users/me/messages?maxResults=${maxResults}&includeSpamTrash=true&q=${encodeURIComponent("{in:spam in:trash}")}`,
-          ),
-          listHistoryMessageIds(),
-        ]);
+      const historyResult = await listHistoryMessageIds();
+      const shouldScanRecentMailbox =
+        !data.incrementalOnly || !account.history_id || historyResult.expired;
+      const [normalMessageIds, spamTrashMessageIds] = shouldScanRecentMailbox
+        ? await Promise.all([
+            listMessageIds(
+              `/gmail/v1/users/me/messages?maxResults=${maxResults}`,
+            ),
+            listMessageIds(
+              `/gmail/v1/users/me/messages?maxResults=${maxResults}&includeSpamTrash=true&q=${encodeURIComponent("{in:spam in:trash}")}`,
+            ),
+          ])
+        : [[], []];
+      const historyMessageIds = historyResult.messageIds;
       const messageIds = Array.from(
         new Set([
           ...normalMessageIds,

@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { listEmailAccounts, syncGmail } from "@/lib/crm.functions";
 import { getErrorMessage } from "@/lib/errors";
 
-const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
-const AUTO_SYNC_STALE_MS = 4 * 60 * 1000;
+const LIVE_SYNC_INTERVAL_MS = 30_000;
+const LIVE_SYNC_MAX_RESULTS = 25;
+const ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 
 export function AutoGmailSync() {
   const queryClient = useQueryClient();
@@ -18,35 +19,48 @@ export function AutoGmailSync() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
     queryFn: () => listAccounts(),
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchInterval: ACCOUNT_REFRESH_INTERVAL_MS,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
   });
 
   const runAutoSync = useCallback(async () => {
-    if (syncing.current || accounts.length === 0) return;
+    if (
+      syncing.current ||
+      accounts.length === 0 ||
+      document.visibilityState !== "visible" ||
+      navigator.onLine === false
+    ) {
+      return;
+    }
 
-    const staleAccounts = accounts.filter((account) => {
+    const syncableAccounts = accounts.filter((account) => {
       if (
         account.connection_status === "reauthentication_required" ||
         account.connection_status === "disconnected" ||
-        account.connection_status === "connecting"
+        account.connection_status === "connecting" ||
+        account.connection_status === "syncing"
       ) {
         return false;
       }
-      const lastSyncedAt = account.last_synced_at ?? account.last_sync_at;
-      if (!lastSyncedAt) return true;
-      return (
-        Date.now() - new Date(lastSyncedAt).getTime() >= AUTO_SYNC_STALE_MS
-      );
+      return true;
     });
-    if (staleAccounts.length === 0) return;
+    if (syncableAccounts.length === 0) return;
 
     syncing.current = true;
     let syncedAnyAccount = false;
     let accountStateChanged = false;
     try {
-      for (const account of staleAccounts) {
+      for (const account of syncableAccounts) {
         try {
-          await sync({ data: { accountId: account.id, maxResults: 100 } });
+          await sync({
+            data: {
+              accountId: account.id,
+              maxResults: LIVE_SYNC_MAX_RESULTS,
+              incrementalOnly: true,
+            },
+          });
           syncedAnyAccount = true;
         } catch (error) {
           const message = getErrorMessage(error);
@@ -83,7 +97,7 @@ export function AutoGmailSync() {
 
     const intervalId = window.setInterval(
       () => void runAutoSync(),
-      AUTO_SYNC_INTERVAL_MS,
+      LIVE_SYNC_INTERVAL_MS,
     );
     const handleResume = () => void runAutoSync();
     const handleVisibility = () => {
