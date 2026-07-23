@@ -233,8 +233,8 @@ function SettingsPage() {
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Syncs automatically every five minutes while Inboxly is open. No
-                passwords are stored.
+                Syncs automatically while Inboxly is open. No passwords are
+                stored.
               </p>
             </div>
           </div>

@@ -8,6 +8,42 @@ import { getErrorMessage } from "@/lib/errors";
 const LIVE_SYNC_INTERVAL_MS = 30_000;
 const LIVE_SYNC_MAX_RESULTS = 25;
 const ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
+const SYNC_LEASE_KEY = "inboxly:gmail-sync-lease";
+const SYNC_LAST_FINISHED_KEY = "inboxly:gmail-sync-last-finished";
+const SYNC_LEASE_TTL_MS = 45_000;
+const SHARED_SYNC_COOLDOWN_MS = 20_000;
+
+type SyncLease = {
+  ownerId: string;
+  expiresAt: number;
+};
+
+function readNumberFromStorage(key: string) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? Number(value) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function readSyncLease() {
+  try {
+    const value = window.localStorage.getItem(SYNC_LEASE_KEY);
+    if (!value) return null;
+    return JSON.parse(value) as SyncLease;
+  } catch {
+    return null;
+  }
+}
+
+function createSyncOwnerId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export function AutoGmailSync() {
   const queryClient = useQueryClient();
@@ -15,6 +51,48 @@ export function AutoGmailSync() {
   const sync = useServerFn(syncGmail);
   const syncing = useRef(false);
   const reconnectNotices = useRef(new Set<string>());
+  const syncOwnerId = useRef(createSyncOwnerId());
+
+  const acquireSyncLease = useCallback(() => {
+    const now = Date.now();
+    if (
+      now - readNumberFromStorage(SYNC_LAST_FINISHED_KEY) <
+      SHARED_SYNC_COOLDOWN_MS
+    ) {
+      return false;
+    }
+
+    try {
+      const currentLease = readSyncLease();
+      if (
+        currentLease &&
+        currentLease.ownerId !== syncOwnerId.current &&
+        currentLease.expiresAt > now
+      ) {
+        return false;
+      }
+
+      const nextLease: SyncLease = {
+        ownerId: syncOwnerId.current,
+        expiresAt: now + SYNC_LEASE_TTL_MS,
+      };
+      window.localStorage.setItem(SYNC_LEASE_KEY, JSON.stringify(nextLease));
+      return readSyncLease()?.ownerId === syncOwnerId.current;
+    } catch {
+      return true;
+    }
+  }, []);
+
+  const releaseSyncLease = useCallback(() => {
+    try {
+      window.localStorage.setItem(SYNC_LAST_FINISHED_KEY, String(Date.now()));
+      if (readSyncLease()?.ownerId === syncOwnerId.current) {
+        window.localStorage.removeItem(SYNC_LEASE_KEY);
+      }
+    } catch {
+      // localStorage can be unavailable in strict privacy modes.
+    }
+  }, []);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
@@ -47,6 +125,7 @@ export function AutoGmailSync() {
       return true;
     });
     if (syncableAccounts.length === 0) return;
+    if (!acquireSyncLease()) return;
 
     syncing.current = true;
     let syncedAnyAccount = false;
@@ -54,14 +133,21 @@ export function AutoGmailSync() {
     try {
       for (const account of syncableAccounts) {
         try {
-          await sync({
+          const result = await sync({
             data: {
               accountId: account.id,
               maxResults: LIVE_SYNC_MAX_RESULTS,
               incrementalOnly: true,
             },
           });
-          syncedAnyAccount = true;
+          const skipped =
+            result &&
+            typeof result === "object" &&
+            "skipped" in result &&
+            result.skipped === true;
+          if (!skipped) {
+            syncedAnyAccount = true;
+          }
         } catch (error) {
           const message = getErrorMessage(error);
           if (message.includes("Reconnect Gmail")) {
@@ -79,6 +165,7 @@ export function AutoGmailSync() {
       }
     } finally {
       syncing.current = false;
+      releaseSyncLease();
     }
 
     if (syncedAnyAccount || accountStateChanged) {
@@ -90,7 +177,7 @@ export function AutoGmailSync() {
         queryClient.invalidateQueries({ queryKey: ["sidebar-counters"] }),
       ]);
     }
-  }, [accounts, queryClient, sync]);
+  }, [accounts, acquireSyncLease, queryClient, releaseSyncLease, sync]);
 
   useEffect(() => {
     void runAutoSync();

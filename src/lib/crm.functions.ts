@@ -18,6 +18,8 @@ export type {
 } from "@/lib/email-folder-state";
 
 const GMAIL_API_BASE_URL = "https://gmail.googleapis.com";
+const GMAIL_MESSAGE_FETCH_CONCURRENCY = 4;
+const GMAIL_IDLE_ACCOUNT_REFRESH_MS = 2 * 60 * 1000;
 
 type AuthenticatedFunctionContext = {
   supabase: SupabaseClient<Database>;
@@ -1019,6 +1021,49 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex++;
+        results[index] = await mapper(items[index], index);
+      }
+    }),
+  );
+
+  return results;
+}
+
+function getTimestamp(value?: string | null) {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function shouldRefreshIdleSyncAccount(
+  account: EmailAccountRow,
+  latestHistoryId: string | null,
+) {
+  const lastSyncedAt = account.last_synced_at ?? account.last_sync_at;
+  const lastSyncedTimestamp = getTimestamp(lastSyncedAt);
+
+  return (
+    account.connection_status !== "connected" ||
+    Boolean(account.last_sync_error) ||
+    Boolean(latestHistoryId && latestHistoryId !== account.history_id) ||
+    Date.now() - lastSyncedTimestamp >= GMAIL_IDLE_ACCOUNT_REFRESH_MS
+  );
+}
+
 function isTransientGmailStatus(status: number) {
   return (
     status === 429 ||
@@ -1107,6 +1152,16 @@ type GmailMessageSummary = {
   threadId?: string;
   labelIds?: string[];
   historyId?: string;
+};
+
+type GmailFullMessage = {
+  id: string;
+  threadId: string;
+  snippet?: string;
+  labelIds?: string[];
+  internalDate?: string;
+  historyId?: string;
+  payload?: GmailPayload;
 };
 
 class GmailApiError extends Error {
@@ -1557,11 +1612,6 @@ export const syncGmail = createServerFn({ method: "POST" })
     if (accErr || !accountData) throw new Error("Account not found");
     const account = accountData as EmailAccountRow;
 
-    await context.supabase
-      .from("email_accounts")
-      .update({ connection_status: "syncing", last_sync_error: null })
-      .eq("id", account.id);
-
     try {
       const enhancedSchemaResult = await context.supabase
         .from("emails")
@@ -1596,6 +1646,30 @@ export const syncGmail = createServerFn({ method: "POST" })
 
       const maxResults = data.maxResults ?? 100;
       let latestHistoryId = account.history_id ?? null;
+
+      const updateAccountSyncSuccess = async (syncedAt: string) => {
+        let { error: updateErr } = await context.supabase
+          .from("email_accounts")
+          .update({
+            last_sync_at: syncedAt,
+            last_synced_at: syncedAt,
+            ...(latestHistoryId ? { history_id: latestHistoryId } : {}),
+            connection_status: "connected",
+            last_sync_error: null,
+          })
+          .eq("id", account.id);
+        if (updateErr && isMissingSupabaseSchemaError(updateErr)) {
+          const legacyUpdate = await context.supabase
+            .from("email_accounts")
+            .update({ last_sync_at: syncedAt })
+            .eq("id", account.id);
+          updateErr = legacyUpdate.error;
+        }
+        if (updateErr) {
+          throw toSupabaseError(updateErr, "public.email_accounts");
+        }
+      };
+
       const listMessageIds = async (path: string) => {
         const listRes = await callGmailApi({
           context,
@@ -1682,26 +1756,52 @@ export const syncGmail = createServerFn({ method: "POST" })
           ...historyMessageIds,
         ]),
       );
+      const checkedAt = new Date().toISOString();
+
+      if (
+        data.incrementalOnly &&
+        !shouldScanRecentMailbox &&
+        messageIds.length === 0
+      ) {
+        if (shouldRefreshIdleSyncAccount(account, latestHistoryId)) {
+          await updateAccountSyncSuccess(checkedAt);
+        }
+
+        return {
+          imported: 0,
+          updated: 0,
+          scanned: 0,
+          syncedAt: checkedAt,
+          skipped: true,
+        };
+      }
+
+      await context.supabase
+        .from("email_accounts")
+        .update({ connection_status: "syncing", last_sync_error: null })
+        .eq("id", account.id);
 
       let imported = 0;
       let updated = 0;
       const touchedThreadIds = new Set<string>();
-      for (const mid of messageIds) {
-        const msgRes = await callGmailApi({
-          context,
-          account,
-          path: `/gmail/v1/users/me/messages/${mid}?format=full`,
-        });
-        if (!msgRes.ok) continue;
-        const msg = (await msgRes.json()) as {
-          id: string;
-          threadId: string;
-          snippet?: string;
-          labelIds?: string[];
-          internalDate?: string;
-          historyId?: string;
-          payload?: GmailPayload;
-        };
+      const gmailMessages = await mapWithConcurrency(
+        messageIds,
+        GMAIL_MESSAGE_FETCH_CONCURRENCY,
+        async (mid): Promise<GmailFullMessage | null> => {
+          const msgRes = await callGmailApi({
+            context,
+            account,
+            path: `/gmail/v1/users/me/messages/${encodeURIComponent(
+              mid,
+            )}?format=full`,
+          });
+          if (!msgRes.ok) return null;
+          return (await msgRes.json()) as GmailFullMessage;
+        },
+      );
+
+      for (const msg of gmailMessages) {
+        if (!msg) continue;
         if (msg.historyId) latestHistoryId = msg.historyId;
         const headers = msg.payload?.headers;
         const from = parseFrom(getHeader(headers, "From"));
@@ -1725,7 +1825,7 @@ export const syncGmail = createServerFn({ method: "POST" })
           .from("emails")
           .select("id, label_ids, labels, is_starred")
           .eq("account_id", account.id)
-          .eq("gmail_message_id", mid)
+          .eq("gmail_message_id", msg.id)
           .maybeSingle();
         if (existingError) {
           throw toSupabaseError(existingError, "public.emails");
@@ -1838,24 +1938,7 @@ export const syncGmail = createServerFn({ method: "POST" })
       }
 
       const syncedAt = new Date().toISOString();
-      let { error: updateErr } = await context.supabase
-        .from("email_accounts")
-        .update({
-          last_sync_at: syncedAt,
-          last_synced_at: syncedAt,
-          ...(latestHistoryId ? { history_id: latestHistoryId } : {}),
-          connection_status: "connected",
-          last_sync_error: null,
-        })
-        .eq("id", account.id);
-      if (updateErr && isMissingSupabaseSchemaError(updateErr)) {
-        const legacyUpdate = await context.supabase
-          .from("email_accounts")
-          .update({ last_sync_at: syncedAt })
-          .eq("id", account.id);
-        updateErr = legacyUpdate.error;
-      }
-      if (updateErr) throw toSupabaseError(updateErr, "public.email_accounts");
+      await updateAccountSyncSuccess(syncedAt);
 
       const { error: activityErr } = await context.supabase
         .from("activity_logs")

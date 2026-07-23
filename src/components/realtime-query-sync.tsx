@@ -2,23 +2,39 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-const COMMON_QUERY_KEYS = [
-  ["dashboard"],
-  ["reports"],
-  ["report-drilldown"],
-  ["sidebar-counters"],
-] as const;
+const REALTIME_FLUSH_DELAY_MS = 900;
+const REALTIME_MAX_FLUSH_DELAY_MS = 2_500;
 
 const TABLE_QUERY_KEYS: Record<string, readonly (readonly string[])[]> = {
   activity_logs: [["admin-activity"], ["dashboard"], ["lead"], ["customer"]],
   campaign_recipients: [["campaigns"], ["reports"], ["dashboard"]],
-  campaigns: [["campaigns"]],
-  contacts: [["contacts"]],
-  customers: [["customers"], ["customer"], ["contacts"]],
-  email_accounts: [["accounts"], ["emails"], ["email-folder-counts"]],
+  campaigns: [["campaigns"], ["reports"], ["dashboard"], ["sidebar-counters"]],
+  contacts: [["contacts"], ["sidebar-counters"]],
+  customers: [
+    ["customers"],
+    ["customer"],
+    ["contacts"],
+    ["dashboard"],
+    ["reports"],
+    ["sidebar-counters"],
+  ],
+  email_accounts: [
+    ["accounts"],
+    ["emails"],
+    ["email-folder-counts"],
+    ["dashboard"],
+    ["sidebar-counters"],
+  ],
   email_attachments: [["email-attachments"]],
-  email_threads: [["emails"], ["email-folder-counts"]],
-  email_templates: [["templates"]],
+  email_threads: [
+    ["emails"],
+    ["email-folder-counts"],
+    ["dashboard"],
+    ["reports"],
+    ["report-drilldown"],
+    ["sidebar-counters"],
+  ],
+  email_templates: [["templates"], ["sidebar-counters"]],
   emails: [
     ["emails"],
     ["email-folder-counts"],
@@ -26,12 +42,29 @@ const TABLE_QUERY_KEYS: Record<string, readonly (readonly string[])[]> = {
     ["contacts"],
     ["lead"],
     ["customer"],
+    ["dashboard"],
+    ["reports"],
+    ["report-drilldown"],
+    ["sidebar-counters"],
   ],
-  leads: [["leads"], ["lead"], ["contacts"]],
+  leads: [
+    ["leads"],
+    ["lead"],
+    ["contacts"],
+    ["dashboard"],
+    ["reports"],
+    ["sidebar-counters"],
+  ],
   notes: [["lead"], ["customer"]],
   profiles: [["team"], ["admin-users"]],
-  reminders: [["reminders"], ["lead"], ["customer"]],
-  tasks: [["tasks"]],
+  reminders: [
+    ["reminders"],
+    ["lead"],
+    ["customer"],
+    ["dashboard"],
+    ["sidebar-counters"],
+  ],
+  tasks: [["tasks"], ["dashboard"], ["sidebar-counters"]],
   user_roles: [["team"], ["admin-users"], ["role"]],
 };
 
@@ -43,19 +76,35 @@ export function RealtimeQuerySync() {
   useEffect(() => {
     const pendingKeys = new Map<string, readonly string[]>();
     let flushTimer: ReturnType<typeof window.setTimeout> | undefined;
+    let pendingStartedAt: number | undefined;
+
+    const flushInvalidations = () => {
+      for (const key of pendingKeys.values()) {
+        queryClient.invalidateQueries({
+          queryKey: [...key],
+          refetchType: "active",
+        });
+      }
+      pendingKeys.clear();
+      pendingStartedAt = undefined;
+    };
 
     const queueInvalidation = (keys: readonly (readonly string[])[]) => {
-      for (const key of [...COMMON_QUERY_KEYS, ...keys]) {
+      for (const key of keys) {
         pendingKeys.set(key.join(":"), key);
       }
 
       window.clearTimeout(flushTimer);
-      flushTimer = window.setTimeout(() => {
-        for (const key of pendingKeys.values()) {
-          queryClient.invalidateQueries({ queryKey: [...key] });
-        }
-        pendingKeys.clear();
-      }, 250);
+      pendingStartedAt ??= Date.now();
+      const elapsed = Date.now() - pendingStartedAt;
+      const delay = Math.max(
+        0,
+        Math.min(
+          REALTIME_FLUSH_DELAY_MS,
+          REALTIME_MAX_FLUSH_DELAY_MS - elapsed,
+        ),
+      );
+      flushTimer = window.setTimeout(flushInvalidations, delay);
     };
 
     const channel = supabase.channel("crm-realtime-query-sync");
